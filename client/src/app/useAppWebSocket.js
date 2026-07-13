@@ -12,7 +12,7 @@
  * Outward: App.jsx 根编排。
  */
 
-import { apiFetch, websocketUrl } from '../api.js';
+import { apiFetch, createWebSocketTicket, websocketUrl } from '../api.js';
 import { applySessionRenameToProjectSessions } from '../session-live-refresh.js';
 import { mergeModelSettingsIntoStatus, shouldApplyModelSettings } from './model-sync.js';
 import { normalizeContextStatus } from './context-status.js';
@@ -426,9 +426,27 @@ export function useAppWebSocket({
       payloadFlushFrame = window.requestAnimationFrame(flushPendingPayloads);
     }
 
-    const connect = () => {
+    const connect = async () => {
       setConnectionState('connecting');
-      const ws = new WebSocket(websocketUrl());
+      let ticket = '';
+      try {
+        ticket = await createWebSocketTicket();
+      } catch (error) {
+        setConnectionState('disconnected');
+        if (error?.status === 401) {
+          stopped = true;
+          onAuthRevoked?.();
+          return;
+        }
+        if (!stopped) {
+          reconnectTimer = window.setTimeout(connect, 1200);
+        }
+        return;
+      }
+      if (stopped) {
+        return;
+      }
+      const ws = new WebSocket(websocketUrl(ticket));
       wsRef.current = ws;
 
       ws.onopen = () => setConnectionState('connecting');

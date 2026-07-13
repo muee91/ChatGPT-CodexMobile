@@ -370,11 +370,13 @@ export function createChatService({
       summary: visibleMessage,
       updatedAt: now,
       messages: [{
-        id: `user-${turnId}`,
+        // The desktop app reports this turn using its own id. Persisting the
+        // same id lets the overlay merge with that later SDK snapshot.
+        id: `user-${appTurnId}`,
         role: 'user',
         content: visibleMessage,
         timestamp: now,
-        turnId,
+        turnId: appTurnId,
         sessionId: selectedSessionId,
         deliveryState: 'confirmed'
       }]
@@ -384,13 +386,13 @@ export function createChatService({
       source: 'desktop-ipc',
       sessionId: selectedSessionId,
       projectId: project.id,
-      turnId,
+      turnId: appTurnId,
       clientTurnId: turnId,
       message: {
-        id: `local-${Date.now()}`,
+        id: `user-${appTurnId}`,
         role: 'user',
         content: visibleMessage,
-        turnId,
+        turnId: appTurnId,
         deliveryState: 'confirmed',
         timestamp: now
       }

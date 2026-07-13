@@ -97,9 +97,10 @@
 
 .model-submenu {
   right: 12px;
-  width: 176px;
-  min-width: 176px;
-  max-width: min(46vw, 210px);
+  width: min(84vw, 340px);
+  min-width: min(84vw, 250px);
+  max-width: min(84vw, 340px);
+  max-height: min(52svh, 420px);
   z-index: 61;
 }
 
@@ -226,6 +227,14 @@
 
 .composer-menu button.model-menu-parent .menu-item-main {
   flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.composer-menu button.model-menu-parent .menu-item-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .submenu-chevron {
@@ -236,6 +245,42 @@
 
 .composer-menu button.model-menu-parent.is-selected .submenu-chevron {
   color: currentColor;
+}
+
+.model-submenu button {
+  align-items: flex-start;
+}
+
+.model-submenu button > .menu-spacer,
+.model-submenu button > svg {
+  margin-top: 2px;
+}
+
+.model-submenu button > .model-option-label {
+  display: block;
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.model-submenu .model-option-label strong,
+.model-submenu .model-option-label small {
+  display: block;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.model-submenu .model-option-label small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 15px;
 }
 
 .composer-menu button:disabled {
@@ -985,9 +1030,9 @@
 
   .model-submenu {
     right: 4px;
-    width: 156px;
-    min-width: 156px;
-    max-width: 156px;
+    width: min(92vw, 304px);
+    min-width: min(92vw, 236px);
+    max-width: min(92vw, 304px);
   }
 }
 

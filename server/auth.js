@@ -27,6 +27,7 @@ export const DATA_DIR = process.env.CODEXMOBILE_HOME || path.join(process.cwd(),
 const STATE_FILE_NAME = 'auth-state.json';
 const DEFAULT_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const SUPERSEDED_TOKEN_GRACE_MS = 5 * 60 * 1000;
+const WEBSOCKET_TICKET_TTL_MS = 30 * 1000;
 
 function iso(nowMs) {
   return new Date(nowMs).toISOString();
@@ -186,6 +187,7 @@ export function createAuthController({
   const pairingCooldownsByRemote = new Map();
   const pairingFailuresByRemote = new Map();
   const socketsByTokenHash = new Map();
+  const websocketTickets = new Map();
   let authState = { devices: [] };
   let stateWriteChain = Promise.resolve();
 
@@ -260,6 +262,52 @@ export function createAuthController({
     if (!set.size) {
       socketsByTokenHash.delete(tokenHash);
     }
+  }
+
+  function pruneExpiredWebSocketTickets(nowMs = now()) {
+    for (const [ticket, entry] of websocketTickets) {
+      if (entry.expiresAtMs <= nowMs) {
+        websocketTickets.delete(ticket);
+      }
+    }
+  }
+
+  function clearWebSocketTicketsForTokenHashes(tokenHashes = []) {
+    const hashes = new Set(tokenHashes.filter(Boolean));
+    for (const [ticket, entry] of websocketTickets) {
+      if (hashes.has(entry.tokenHash)) {
+        websocketTickets.delete(ticket);
+      }
+    }
+  }
+
+  function createWebSocketTicket({ tokenHash, remoteAddress } = {}) {
+    if (!tokenHash) {
+      return null;
+    }
+    const nowMs = now();
+    pruneExpiredWebSocketTickets(nowMs);
+    const ticket = createToken();
+    websocketTickets.set(ticket, {
+      tokenHash,
+      remoteAddress: normalizeRemoteAddress(remoteAddress),
+      expiresAtMs: nowMs + WEBSOCKET_TICKET_TTL_MS
+    });
+    return { ticket, expiresAt: iso(nowMs + WEBSOCKET_TICKET_TTL_MS) };
+  }
+
+  function consumeWebSocketTicket(ticket, { remoteAddress } = {}) {
+    const key = String(ticket || '').trim();
+    const entry = websocketTickets.get(key);
+    if (!entry) {
+      return { ok: false };
+    }
+    websocketTickets.delete(key);
+    const nowMs = now();
+    if (entry.expiresAtMs <= nowMs || entry.remoteAddress !== normalizeRemoteAddress(remoteAddress)) {
+      return { ok: false };
+    }
+    return { ok: true, tokenHash: entry.tokenHash };
   }
 
   function closeSocketsForTokenHash(tokenHash) {
@@ -507,6 +555,7 @@ export function createAuthController({
     for (const record of deviceTokenRecords(device)) {
       closeSocketsForTokenHash(record.hash);
     }
+    clearWebSocketTicketsForTokenHashes(deviceTokenRecords(device).map((record) => record.hash));
     authState.devices.splice(index, 1);
     await writeState();
     return { ok: true, deviceId: device.id };
@@ -519,6 +568,7 @@ export function createAuthController({
         for (const record of deviceTokenRecords(device)) {
           closeSocketsForTokenHash(record.hash);
         }
+        clearWebSocketTicketsForTokenHashes(deviceTokenRecords(device).map((record) => record.hash));
         authState.devices.splice(index, 1);
         await writeState();
         return { ok: true, deviceId: device.id };
@@ -550,6 +600,8 @@ export function createAuthController({
     revokeToken,
     registerSocket,
     unregisterSocket,
+    createWebSocketTicket,
+    consumeWebSocketTicket,
     listDevices,
     getTrustedDeviceCount,
     getPendingPairingRequest
@@ -592,6 +644,14 @@ export function registerSocket(tokenHash, socket) {
 
 export function unregisterSocket(tokenHash, socket) {
   return defaultAuth.unregisterSocket(tokenHash, socket);
+}
+
+export function createWebSocketTicket(params) {
+  return defaultAuth.createWebSocketTicket(params);
+}
+
+export function consumeWebSocketTicket(ticket, options) {
+  return defaultAuth.consumeWebSocketTicket(ticket, options);
 }
 
 export function listDevices(options) {

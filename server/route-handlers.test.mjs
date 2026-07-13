@@ -344,6 +344,7 @@ test('file route handler routes remote image proxy requests', async () => {
 test('session route handler renames sessions and broadcasts refresh events', async () => {
   const broadcasts = [];
   const handler = createSessionRouteHandler({
+    listProjects: () => [],
     getProject: () => ({ id: 'project-1' }),
     getSession: () => ({ id: 'session-1', projectId: 'project-1' }),
     listProjectSessions: () => [],

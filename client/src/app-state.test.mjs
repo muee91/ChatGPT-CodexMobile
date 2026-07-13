@@ -127,7 +127,7 @@ test('selected active turn activity counts as composer runtime without live sync
   assert.equal(selectedSessionIsRunning({
     running: false,
     hasActiveTurnActivity: true
-  }), false);
+  }), true);
   assert.equal(selectedSessionIsRunning({
     running: true,
     hasActiveTurnActivity: false

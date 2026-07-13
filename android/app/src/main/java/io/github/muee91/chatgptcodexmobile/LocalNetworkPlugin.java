@@ -29,6 +29,7 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -98,6 +99,7 @@ public class LocalNetworkPlugin extends Plugin {
                 return addresses;
             }
             String address = String.format(
+                Locale.ROOT,
                 "%d.%d.%d.%d",
                 rawIp & 0xff,
                 (rawIp >> 8) & 0xff,

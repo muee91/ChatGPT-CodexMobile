@@ -24,6 +24,8 @@ import {
   getTrustedDeviceCount,
   initializeAuth,
   completePairingRequest,
+  consumeWebSocketTicket,
+  createWebSocketTicket,
   listDevices,
   registerSocket,
   revokeDevice,
@@ -944,6 +946,20 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (method === 'POST' && pathname === '/api/auth/ws-ticket') {
+    const authResult = await authenticateRequest(req, res);
+    if (!authResult.ok) {
+      sendJson(res, 401, { error: 'Pairing required' });
+      return;
+    }
+    const ticket = createWebSocketTicket({
+      tokenHash: authResult.tokenHash,
+      remoteAddress: remoteAddress(req)
+    });
+    sendJson(res, 200, ticket);
+    return;
+  }
+
   if (!(await requireAuth(req, res, pathname, url))) {
     return;
   }
@@ -1207,7 +1223,12 @@ async function main() {
       return;
     }
 
-    const authResult = await authenticateRequest(req, null, { rotate: false });
+    const ticketResult = consumeWebSocketTicket(url.searchParams.get('ticket'), {
+      remoteAddress: remoteAddress(req)
+    });
+    const authResult = ticketResult.ok
+      ? ticketResult
+      : await authenticateRequest(req, null, { rotate: false });
     if (!authResult.ok) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();

@@ -1,6 +1,6 @@
 {
   "appId": "io.github.muee91.chatgptcodexmobile",
-  "appName": "ChatGPT CodexMobile",
+  "appName": "CodexMobile",
   "webDir": "client/dist",
   "server": {
     "cleartext": true,

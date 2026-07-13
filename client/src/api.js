@@ -356,7 +356,7 @@ export async function apiBlobFetch(path, options = {}) {
   return response.blob();
 }
 
-export function websocketUrl() {
+export function websocketUrl(ticket = '') {
   const configuredServerUrl = getServerUrl();
   if (configuredServerUrl) {
     const serverUrl = new URL(configuredServerUrl);
@@ -364,12 +364,16 @@ export function websocketUrl() {
     serverUrl.pathname = '/ws';
     serverUrl.search = '';
     serverUrl.hash = '';
-    const token = getToken();
-    if (token) {
-      serverUrl.searchParams.set('token', token);
+    if (ticket) {
+      serverUrl.searchParams.set('ticket', ticket);
     }
     return serverUrl.toString();
   }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${protocol}//${window.location.host}/ws`;
+}
+
+export async function createWebSocketTicket() {
+  const result = await apiFetch('/api/auth/ws-ticket', { method: 'POST' });
+  return String(result?.ticket || '').trim();
 }

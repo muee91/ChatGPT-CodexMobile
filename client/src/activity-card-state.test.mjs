@@ -52,9 +52,9 @@ test('activity card can follow external runtime while desktop projection is stal
   assert.equal(activityCardShouldOpen({ running: true, hasProcess: true }), true);
 });
 
-test('activity card folds a forced-open process after runtime completion', () => {
-  assert.equal(initialActivityCardOpenState({ running: true, hasProcess: true }), true);
-  assert.equal(nextActivityCardOpenState({ previousOpen: true, running: false, hasProcess: true }), false);
+test('activity card preserves a manually open completed process', () => {
+  assert.equal(initialActivityCardOpenState({ running: true, hasProcess: true }), false);
+  assert.equal(nextActivityCardOpenState({ previousOpen: true, running: false, hasProcess: true }), true);
   assert.equal(nextActivityCardOpenState({ previousOpen: false, running: false, hasProcess: true }), false);
 });
 

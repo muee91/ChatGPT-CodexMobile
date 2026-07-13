@@ -394,7 +394,7 @@ test('sendChat defaults to desktop IPC when an existing desktop thread is availa
 test('sendChat prefers desktop IPC for existing desktop threads when the owner is available', async () => {
   let started = null;
   let runPayload = null;
-  const { service, broadcasts } = makeChatService({
+  const { service, broadcasts, overlays } = makeChatService({
     getDesktopBridgeStatus: async () => ({
       strict: true,
       connected: true,
@@ -430,6 +430,13 @@ test('sendChat prefers desktop IPC for existing desktop threads when the owner i
   assert.equal(runPayload, null);
   assert.equal(service.getTurn('client-turn-1')?.source, 'desktop-ipc');
   assert.equal(broadcasts.some((payload) => payload.type === 'status-update' && payload.source === 'desktop-ipc'), true);
+  const userMessage = broadcasts.find((payload) => payload.type === 'user-message');
+  assert.equal(userMessage.turnId, 'desktop-turn-1');
+  assert.equal(userMessage.clientTurnId, 'client-turn-1');
+  assert.equal(userMessage.message.id, 'user-desktop-turn-1');
+  assert.equal(userMessage.message.turnId, 'desktop-turn-1');
+  assert.equal(overlays.at(-1)?.messages?.[0]?.id, 'user-desktop-turn-1');
+  assert.equal(overlays.at(-1)?.messages?.[0]?.turnId, 'desktop-turn-1');
 });
 
 test('sendChat falls back to headless local when desktop follower owner is unavailable', async () => {

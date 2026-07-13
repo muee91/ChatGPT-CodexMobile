@@ -11,12 +11,14 @@
  * Outward: Vite HTML 入口 `index.html` 所引脚本。
  */
 
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
-import FilePreviewApp from './app/FilePreviewApp.jsx';
-import DemoScreenshotApp from './demo/DemoScreenshotApp.jsx';
 import './styles/index.css';
+
+// Keep document conversion and screenshot-only code out of the chat startup path.
+const FilePreviewApp = lazy(() => import('./app/FilePreviewApp.jsx'));
+const DemoScreenshotApp = lazy(() => import('./demo/DemoScreenshotApp.jsx'));
 
 const RootApp = window.location.pathname === '/preview/file'
   ? FilePreviewApp
@@ -26,6 +28,8 @@ const RootApp = window.location.pathname === '/preview/file'
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <RootApp />
+    <Suspense fallback={<main role="status">正在加载…</main>}>
+      <RootApp />
+    </Suspense>
   </React.StrictMode>
 );

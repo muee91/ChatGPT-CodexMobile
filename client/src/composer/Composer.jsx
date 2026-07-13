@@ -614,7 +614,10 @@ function ComposerView({
                   }}
                 >
                   {selectedModel === model.value ? <Check size={16} /> : <span className="menu-spacer" />}
-                  <span>{model.label}</span>
+                  <span className="model-option-label">
+                    <strong>{model.label}</strong>
+                    {model.label !== model.value ? <small>{model.value}</small> : null}
+                  </span>
                 </button>
               ))}
             </div>

@@ -246,6 +246,37 @@ test('token verifies, rotates, lists devices, and deleted devices disappear', as
   assert.equal(afterRevoke.ok, false);
 });
 
+test('websocket tickets are single-use, short-lived, and bound to the requesting address', async () => {
+  const t = await tempAuth();
+  const request = await t.auth.startPairingRequest({
+    deviceName: 'iPhone',
+    remoteAddress: '192.168.1.23',
+    securityOptions: t.security()
+  });
+  const paired = await t.auth.completePairingRequest({
+    requestId: request.requestId,
+    code: t.logs[0].code,
+    remoteAddress: '192.168.1.23',
+    securityOptions: t.security()
+  });
+  const verified = await t.auth.verifyToken(paired.token, {
+    remoteAddress: '192.168.1.23',
+    rotate: false,
+    securityOptions: t.security()
+  });
+  const issued = t.auth.createWebSocketTicket({ tokenHash: verified.tokenHash, remoteAddress: '192.168.1.23' });
+
+  assert.match(issued.ticket, /^[A-Za-z0-9_-]+$/);
+  assert.equal(t.auth.consumeWebSocketTicket(issued.ticket, { remoteAddress: '192.168.1.24' }).ok, false);
+
+  const next = t.auth.createWebSocketTicket({ tokenHash: verified.tokenHash, remoteAddress: '192.168.1.23' });
+  assert.deepEqual(t.auth.consumeWebSocketTicket(next.ticket, { remoteAddress: '192.168.1.23' }), {
+    ok: true,
+    tokenHash: verified.tokenHash
+  });
+  assert.equal(t.auth.consumeWebSocketTicket(next.ticket, { remoteAddress: '192.168.1.23' }).ok, false);
+});
+
 test('revokeToken closes sockets registered to all tokens for the same device', async () => {
   const t = await tempAuth();
   const request = await t.auth.startPairingRequest({

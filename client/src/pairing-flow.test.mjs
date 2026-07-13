@@ -1,0 +1,134 @@
+/**
+ * 测试 pairing-flow.js：默认设备名识别与配对码规范化。
+ *
+ * Keywords: pairing-flow, device-name, tests
+ *
+ * Exports: 无导出 / 内含用例
+ *
+ * Inward: pairing-flow.js
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  defaultDeviceName,
+  normalizePairingCode,
+  pairingRequestFromSearch,
+  pairingRequestFromText,
+  pairingServerUrlFromQr,
+  startPairingRequest
+} from './pairing-flow.js';
+
+test('defaultDeviceName recognizes common mobile browsers', () => {
+  assert.equal(defaultDeviceName({ platform: 'iPhone', userAgent: 'Mobile Safari' }), 'iPhone');
+  assert.equal(defaultDeviceName({ platform: 'MacIntel', userAgent: 'Mozilla/5.0 (iPad)' }), 'iPad');
+  assert.equal(defaultDeviceName({ platform: 'Linux armv8', userAgent: 'Android Chrome' }), 'Android');
+  assert.equal(defaultDeviceName({ platform: 'MacIntel', userAgent: 'Desktop' }), 'Mac');
+  assert.equal(defaultDeviceName({ platform: 'Win32', userAgent: 'Chrome' }), 'Windows PC');
+});
+
+test('pairingRequestFromSearch parses terminal pairing links safely', () => {
+  assert.deepEqual(
+    pairingRequestFromSearch('?requestId=req-1&code=jqut-zfc7-4q&codeLength=10'),
+    { requestId: 'req-1', code: 'JQUTZFC74Q', codeLength: 10, autoSubmit: true, serverUrl: '' }
+  );
+  assert.equal(pairingRequestFromSearch('?requestId=req-1&code=bad*&codeLength=10'), null);
+  assert.equal(pairingRequestFromSearch('?code=JQUTZFC74Q'), null);
+});
+
+test('pairingRequestFromText parses full QR URLs and keeps server origin', () => {
+  assert.deepEqual(
+    pairingRequestFromText('http://192.168.10.133:3321/pair?requestId=req-2&code=ABCD-EFGH-JK&codeLength=10'),
+    {
+      requestId: 'req-2',
+      code: 'ABCDEFGHJK',
+      codeLength: 10,
+      autoSubmit: true,
+      serverUrl: 'http://192.168.10.133:3321'
+    }
+  );
+});
+
+test('pairingServerUrlFromQr keeps the scanned server instead of stale selected state', () => {
+  assert.equal(
+    pairingServerUrlFromQr('http://192.168.10.173:3321', 'http://192.168.10.105:3321'),
+    'http://192.168.10.173:3321'
+  );
+  assert.equal(
+    pairingServerUrlFromQr('', '192.168.10.105:3321'),
+    'http://192.168.10.105:3321'
+  );
+});
+
+test('normalizePairingCode accepts terminal formatted codes with separators', () => {
+  assert.equal(normalizePairingCode('K7B4-HT34-MK', 10), 'K7B4HT34MK');
+  assert.equal(normalizePairingCode(' k7b4 ht34 mk ', 10), 'K7B4HT34MK');
+});
+
+test('startPairingRequest asks the server to create a phone pairing request', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const originalLocalStorage = globalThis.localStorage;
+  globalThis.fetch = async (path, options) => {
+    calls.push({ path, options });
+    return new Response(JSON.stringify({ requestId: 'req-phone', codeLength: 10 }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  globalThis.localStorage = {
+    getItem: () => '',
+    removeItem: () => {}
+  };
+
+  try {
+    const result = await startPairingRequest({ deviceName: 'iPhone' });
+
+    assert.deepEqual(result, { requestId: 'req-phone', codeLength: 10 });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].path, '/api/pair/request');
+    assert.equal(calls[0].options.method, 'POST');
+    assert.deepEqual(JSON.parse(calls[0].options.body), { deviceName: 'iPhone' });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalLocalStorage) {
+      globalThis.localStorage = originalLocalStorage;
+    } else {
+      delete globalThis.localStorage;
+    }
+  }
+});
+
+test('startPairingRequest uses the current unsaved server url when provided', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const originalLocalStorage = globalThis.localStorage;
+  globalThis.fetch = async (path, options) => {
+    calls.push({ path, options });
+    return new Response(JSON.stringify({ requestId: 'req-phone', codeLength: 10 }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  globalThis.localStorage = {
+    getItem: () => '',
+    removeItem: () => {}
+  };
+
+  try {
+    await startPairingRequest({
+      deviceName: 'Android',
+      serverUrl: 'http://192.168.10.133:3321'
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].path, 'http://192.168.10.133:3321/api/pair/request');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalLocalStorage) {
+      globalThis.localStorage = originalLocalStorage;
+    } else {
+      delete globalThis.localStorage;
+    }
+  }
+});

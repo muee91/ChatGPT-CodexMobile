@@ -1,0 +1,327 @@
+.quota-widget {
+  margin-top: 0;
+}
+
+.quota-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px 32px;
+  align-items: center;
+  min-height: 46px;
+  padding: 4px 2px;
+  border-radius: 0;
+  background: transparent;
+  border-bottom: 1px solid rgba(226, 229, 225, 0.82);
+}
+
+[data-theme="dark"] .quota-row {
+  background: transparent;
+  border-bottom-color: rgba(54, 54, 54, 0.9);
+}
+
+.quota-main,
+.quota-refresh,
+.quota-toggle,
+.quota-error,
+.quota-account-message {
+  border: 0;
+  font: inherit;
+}
+
+.quota-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 8px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.quota-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.quota-kind {
+  flex: 0 0 auto;
+  color: #69717b;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+[data-theme="dark"] .quota-kind {
+  color: var(--muted);
+}
+
+.quota-refresh {
+  width: 70px;
+  height: 30px;
+  min-width: 70px;
+  padding: 0 9px;
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel-2);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .quota-refresh {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.quota-refresh:disabled {
+  opacity: 0.62;
+}
+
+.quota-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: #818993;
+  background: transparent;
+}
+
+.quota-toggle svg {
+  transition: transform 160ms ease;
+}
+
+.quota-widget.is-expanded .quota-toggle svg {
+  transform: rotate(180deg);
+}
+
+.quota-panel {
+  display: grid;
+  gap: 7px;
+  max-height: min(34svh, 310px);
+  margin-top: 7px;
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.quota-account {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid #e3e7e2;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+[data-theme="dark"] .quota-account {
+  border-color: #202024;
+  background: #0a0a0b;
+}
+
+.quota-account-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quota-account-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #2f363f;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+[data-theme="dark"] .quota-account-head span {
+  color: var(--text);
+}
+
+.quota-account-head small {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  min-width: 42px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--panel-2);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+[data-theme="dark"] .quota-account-head small {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.quota-window-list {
+  display: grid;
+  gap: 7px;
+}
+
+.quota-window {
+  display: grid;
+  gap: 4px;
+}
+
+.quota-window-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #68717b;
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.quota-window-meta strong {
+  color: #2f363f;
+  font-size: 11px;
+}
+
+[data-theme="dark"] .quota-window-meta strong {
+  color: var(--text);
+}
+
+.quota-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+
+[data-theme="dark"] .quota-bar {
+  background: var(--panel-2);
+}
+
+.quota-bar span {
+  display: block;
+  width: var(--quota-percent, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: #2f363f;
+}
+
+.quota-window.is-high .quota-bar span {
+  background: var(--danger);
+}
+
+.quota-window.is-healthy .quota-bar span {
+  background: #15a46b;
+}
+
+.quota-window.is-medium .quota-bar span {
+  background: #d6a719;
+}
+
+.quota-window.is-warning .quota-bar span {
+  background: #e87922;
+}
+
+.quota-window.is-low .quota-bar span {
+  background: var(--danger);
+}
+
+.quota-error,
+.quota-account-message,
+.quota-empty {
+  width: 100%;
+  min-height: 34px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  color: #8f332d;
+  background: #fff1f1;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: left;
+}
+
+.quota-empty {
+  color: var(--muted);
+  background: #f5f7f4;
+}
+
+.quota-account.is-disabled .quota-account-message {
+  color: #68717b;
+  background: #f5f7f4;
+}
+
+[data-theme="dark"] .quota-error,
+[data-theme="dark"] .quota-account-message {
+  color: var(--danger);
+  background: rgba(250, 66, 62, 0.14);
+}
+
+[data-theme="dark"] .quota-empty,
+[data-theme="dark"] .quota-account.is-disabled .quota-account-message {
+  color: var(--muted);
+  background: var(--panel-2);
+}
+
+/* Quota panel: inline above footer, lighter chrome */
+.quota-panel {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 8px;
+  max-height: min(38svh, 320px);
+  margin: 0 0 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  overflow: auto;
+}
+
+[data-theme="dark"] .quota-panel {
+  background: var(--panel-2);
+}
+
+.quota-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+[data-theme="dark"] .quota-panel-head {
+  color: var(--text);
+}
+
+.quota-panel-head .quota-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+[data-theme="dark"] .quota-panel-head .quota-refresh {
+  color: var(--muted);
+  background: var(--panel);
+}
+
+.quota-panel .quota-account {
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+[data-theme="dark"] .quota-panel .quota-account {
+  background: var(--panel);
+  border-color: var(--line);
+}

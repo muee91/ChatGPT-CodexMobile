@@ -1,0 +1,712 @@
+/**
+ * 与本机 Codex.app / headless codex 子进程通信，查询桌面桥状态与 thread 列表。
+ *
+ * Keywords: codex-app-server, child-process, desktop-bridge, thread-api
+ *
+ * Exports:
+ * - resolveAppServerTransport / defaultServerRequestResult — 传输层与默认响应。
+ * - CodexAppServerClient / createCodexAppServerClient — 客户端构造。
+ * - getDesktopBridgeStatus — 当前桥接健康与能力摘要。
+ * - listDesktopThreads / desktopThreadListRequestParams / filterDesktopThreadsForArchiveMode — Thread 列表与归档态筛选。
+ * - readDesktopThread / setDesktopThreadName / archiveDesktopThread / unarchiveDesktopThread — Thread CRUD 辅助。
+ * - notifyDesktopThreadListChanged — 通过桌面 IPC 请求 Codex Desktop 热刷新线程列表。
+ *
+ * Inward（本模块依赖/组装的关键符号）: desktop-ipc-client（广播/probe）、child_process.spawn。
+ *
+ * Outward（谁在用/调用场景）: codex-data、chat-delivery、session 读取。
+ *
+ * 不负责: 移动端 HTTP 路由。
+ */
+import { spawn } from 'node:child_process';
+import fsSync from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  broadcastDesktopThreadArchived,
+  broadcastDesktopThreadUnarchived,
+  broadcastDesktopThreadListRefresh,
+  broadcastDesktopThreadTitleUpdated,
+  probeDesktopIpc
+} from './desktop-ipc-client.js';
+
+const DEFAULT_CODEX_APP_BINARY = '/Applications/Codex.app/Contents/Resources/codex';
+const DEFAULT_CHATGPT_APP_BINARY = '/Applications/ChatGPT.app/Contents/Resources/codex';
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_CONTROL_SOCKET = path.join(os.homedir(), '.codex', 'app-server-control', 'app-server-control.sock');
+const BRIDGE_STATUS_CACHE_MS = 2500;
+const MAX_STDOUT_LINE_BYTES = Math.max(
+  256 * 1024,
+  Number(process.env.CODEXMOBILE_APP_SERVER_MAX_STDOUT_LINE_BYTES) || 8 * 1024 * 1024
+);
+
+let bridgeStatusCache = null;
+
+function executablePath(value) {
+  const candidate = String(value || '').trim();
+  if (!candidate) {
+    return '';
+  }
+  try {
+    fsSync.accessSync(candidate, fsSync.constants.X_OK);
+    return candidate;
+  } catch {
+    return '';
+  }
+}
+
+function executableFromPath(command, env = process.env) {
+  const name = String(command || '').trim();
+  if (!name) {
+    return '';
+  }
+  for (const directory of String(env.PATH || '').split(path.delimiter).filter(Boolean)) {
+    const found = executablePath(path.join(directory, name));
+    if (found) {
+      return found;
+    }
+  }
+  return '';
+}
+
+export function codexBinaryCandidates(env = process.env) {
+  const projectBinary = path.resolve(import.meta.dirname, '..', 'node_modules', '.bin', 'codex');
+  return [
+    env.CODEXMOBILE_CODEX_BINARY,
+    env.CODEX_BINARY,
+    DEFAULT_CHATGPT_APP_BINARY,
+    DEFAULT_CODEX_APP_BINARY,
+    projectBinary,
+    executableFromPath('codex', env)
+  ].filter(Boolean);
+}
+
+export function resolveCodexBinary(env = process.env) {
+  for (const candidate of codexBinaryCandidates(env)) {
+    const executable = executablePath(candidate);
+    if (executable) {
+      return executable;
+    }
+  }
+  return 'codex';
+}
+
+function responseError(message, method = '') {
+  const error = new Error(message || `Codex app-server request failed${method ? `: ${method}` : ''}`);
+  error.method = method;
+  return error;
+}
+
+function isEnabled(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || '').trim());
+}
+
+function socketStatus(sockPath) {
+  if (!sockPath) {
+    return { ok: false, reason: '未找到桌面端 Codex app-server control socket' };
+  }
+  try {
+    const stat = fsSync.statSync(sockPath);
+    if (!stat.isSocket()) {
+      return { ok: false, reason: `桌面端 control socket 路径不是 socket: ${sockPath}` };
+    }
+    return { ok: true, sockPath };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error.code === 'ENOENT'
+        ? `桌面端 control socket 不存在: ${sockPath}`
+        : `无法访问桌面端 control socket: ${error.message}`
+    };
+  }
+}
+
+export function resolveAppServerTransport(env = process.env, { allowHeadlessLocal = false } = {}) {
+  const allowIsolated = isEnabled(env.CODEXMOBILE_ALLOW_ISOLATED_CODEX);
+  const disableHeadless = isEnabled(env.CODEXMOBILE_DISABLE_HEADLESS_CODEX);
+  const explicitSocket = String(env.CODEXMOBILE_CODEX_APP_SERVER_SOCK || '').trim();
+  const candidateSocket = explicitSocket || DEFAULT_CONTROL_SOCKET;
+  const candidate = socketStatus(candidateSocket);
+  if (candidate.ok) {
+    return {
+      mode: 'desktop-proxy',
+      strict: true,
+      sockPath: candidate.sockPath,
+      connected: true,
+      reason: null
+    };
+  }
+  if (allowIsolated) {
+    return {
+      mode: 'isolated-dev',
+      strict: false,
+      sockPath: null,
+      connected: true,
+      reason: 'CODEXMOBILE_ALLOW_ISOLATED_CODEX=1，正在使用独立开发 app-server'
+    };
+  }
+  if (allowHeadlessLocal && !disableHeadless) {
+    return {
+      mode: 'headless-local',
+      strict: false,
+      sockPath: null,
+      connected: true,
+      reason: '桌面端 Codex 未连接，正在使用后台 Codex 执行'
+    };
+  }
+  return {
+    mode: 'unavailable',
+    strict: true,
+    sockPath: candidateSocket,
+    connected: false,
+    reason: candidate.reason
+  };
+}
+
+function unavailableBridgeError(transport) {
+  const error = responseError(
+    `桌面端 Codex 未连接：${transport?.reason || '未找到可用 app-server control socket'}`,
+    'desktop-bridge'
+  );
+  error.statusCode = 503;
+  error.code = 'CODEXMOBILE_DESKTOP_BRIDGE_UNAVAILABLE';
+  error.transport = transport;
+  return error;
+}
+
+function isDesktopProxyConnectionFailure(error) {
+  const message = String(error?.message || error || '');
+  return /failed to connect to socket|Connection refused|os error 61/i.test(message);
+}
+
+export function desktopProxyFailureFallbackTransport(env = process.env, {
+  allowReadOnlyIsolated = false,
+  allowHeadlessLocal = false
+} = {}) {
+  if (allowReadOnlyIsolated || isEnabled(env.CODEXMOBILE_ALLOW_ISOLATED_CODEX)) {
+    return {
+      mode: 'isolated-dev',
+      strict: false,
+      sockPath: null,
+      connected: true,
+      reason: '桌面端 control socket 无法连接，正在使用独立开发 app-server'
+    };
+  }
+  if (allowHeadlessLocal && !isEnabled(env.CODEXMOBILE_DISABLE_HEADLESS_CODEX)) {
+    return {
+      mode: 'headless-local',
+      strict: false,
+      sockPath: null,
+      connected: true,
+      reason: '桌面端 control socket 无法连接，正在使用后台 Codex 执行'
+    };
+  }
+  return null;
+}
+
+export function defaultServerRequestResult(message) {
+  switch (message?.method) {
+    case 'item/commandExecution/requestApproval':
+      return { decision: 'decline' };
+    case 'item/fileChange/requestApproval':
+      return { decision: 'decline' };
+    case 'item/permissions/requestApproval':
+      return { permissions: {}, scope: 'turn' };
+    case 'applyPatchApproval':
+    case 'execCommandApproval':
+      return { decision: 'denied' };
+    case 'item/tool/requestUserInput':
+      return { answers: {} };
+    case 'item/plan/requestImplementation':
+      return {};
+    case 'mcpServer/elicitation/request':
+      return { action: 'decline', content: null, _meta: null };
+    case 'item/tool/call':
+      return { contentItems: [], success: false };
+    default:
+      return null;
+  }
+}
+
+export class CodexAppServerClient {
+  constructor({
+    env = process.env,
+    cwd = process.cwd(),
+    clientInfo = {},
+    onNotification = null,
+    onServerRequest = null,
+    allowReadOnlyIsolated = false,
+    allowHeadlessLocal = false,
+    transport = null
+  } = {}) {
+    this.env = env;
+    this.cwd = cwd;
+    this.clientInfo = {
+      name: clientInfo.name || 'CodexMobile',
+      title: clientInfo.title || null,
+      version: clientInfo.version || '0.1.0'
+    };
+    this.onNotification = onNotification;
+    this.onServerRequest = onServerRequest;
+    this.transport = transport || resolveAppServerTransport({
+      ...env,
+      CODEXMOBILE_ALLOW_ISOLATED_CODEX: allowReadOnlyIsolated ? '1' : env.CODEXMOBILE_ALLOW_ISOLATED_CODEX
+    }, { allowHeadlessLocal });
+    this.child = null;
+    this.stdoutBuffer = Buffer.alloc(0);
+    this.nextId = 1;
+    this.pending = new Map();
+    this.stderr = '';
+    this.closed = new Promise((resolve) => {
+      this.resolveClosed = resolve;
+    });
+  }
+
+  start() {
+    if (this.child) {
+      return;
+    }
+    if (this.transport.mode === 'unavailable') {
+      throw unavailableBridgeError(this.transport);
+    }
+    const args = this.transport.mode === 'desktop-proxy'
+      ? ['app-server', 'proxy', '--sock', this.transport.sockPath]
+      : ['app-server', '--listen', 'stdio://'];
+    this.child = spawn(resolveCodexBinary(this.env), args, {
+      cwd: this.cwd,
+      env: this.env,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    this.child.stdout.on('data', (chunk) => this.handleStdoutChunk(chunk));
+
+    this.child.stderr.on('data', (chunk) => {
+      this.stderr += chunk.toString();
+      if (this.stderr.length > 24_000) {
+        this.stderr = this.stderr.slice(-12_000);
+      }
+    });
+
+    this.child.on('error', (error) => {
+      this.rejectAll(error);
+      this.resolveClosed?.({ code: null, signal: null, error });
+    });
+    this.child.on('close', (code, signal) => {
+      const error = responseError(
+        this.stderr.trim() || `Codex app-server exited with ${code ?? signal ?? 'unknown status'}`
+      );
+      this.rejectAll(error);
+      this.resolveClosed?.({ code, signal, error: code === 0 ? null : error });
+    });
+  }
+
+  handleStdoutChunk(chunk) {
+    const input = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (!input.length) {
+      return;
+    }
+    this.stdoutBuffer = this.stdoutBuffer.length
+      ? Buffer.concat([this.stdoutBuffer, input])
+      : Buffer.from(input);
+    if (this.stdoutBuffer.length > MAX_STDOUT_LINE_BYTES) {
+      const error = responseError(
+        `Codex app-server stdout line exceeded ${MAX_STDOUT_LINE_BYTES} bytes without a newline`,
+        'app-server-stdout'
+      );
+      this.rejectAll(error);
+      this.close();
+      return;
+    }
+    for (;;) {
+      const newlineIndex = this.stdoutBuffer.indexOf(0x0a);
+      if (newlineIndex < 0) {
+        return;
+      }
+      const rawLine = this.stdoutBuffer.subarray(0, newlineIndex);
+      this.stdoutBuffer = this.stdoutBuffer.subarray(newlineIndex + 1);
+      const line = rawLine.length && rawLine.at(-1) === 0x0d
+        ? rawLine.subarray(0, rawLine.length - 1)
+        : rawLine;
+      if (line.length > MAX_STDOUT_LINE_BYTES) {
+        const error = responseError(
+          `Codex app-server stdout line exceeded ${MAX_STDOUT_LINE_BYTES} bytes`,
+          'app-server-stdout'
+        );
+        this.rejectAll(error);
+        this.close();
+        return;
+      }
+      this.handleLine(line.toString('utf8'));
+    }
+  }
+
+  async initialize() {
+    this.start();
+    await this.request('initialize', {
+      clientInfo: this.clientInfo,
+      capabilities: { experimentalApi: true }
+    });
+    this.notify('initialized');
+    return this;
+  }
+
+  request(method, params, { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS } = {}) {
+    this.start();
+    const id = this.nextId;
+    this.nextId += 1;
+    const payload = params === undefined ? { id, method } : { id, method, params };
+    const promise = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(responseError(`Codex app-server request timed out: ${method}`, method));
+      }, timeoutMs);
+      this.pending.set(id, { method, resolve, reject, timeout });
+    });
+    this.write(payload);
+    return promise;
+  }
+
+  notify(method, params) {
+    const payload = params === undefined ? { method } : { method, params };
+    this.write(payload);
+  }
+
+  respond(id, result) {
+    this.write({ id, result });
+  }
+
+  respondError(id, message, code = -32603) {
+    this.write({ id, error: { code, message } });
+  }
+
+  write(payload) {
+    if (!this.child?.stdin?.writable) {
+      throw responseError('Codex app-server stdin is not writable');
+    }
+    this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+  }
+
+  handleLine(line) {
+    if (!line.trim()) {
+      return;
+    }
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      return;
+    }
+
+    if (message.id !== undefined && message.method) {
+      this.handleServerRequest(message);
+      return;
+    }
+
+    if (message.id !== undefined) {
+      const pending = this.pending.get(message.id);
+      if (!pending) {
+        return;
+      }
+      this.pending.delete(message.id);
+      clearTimeout(pending.timeout);
+      if (message.error) {
+        pending.reject(responseError(message.error.message, pending.method));
+      } else {
+        pending.resolve(message.result);
+      }
+      return;
+    }
+
+    if (message.method && this.onNotification) {
+      this.onNotification(message);
+    }
+  }
+
+  async handleServerRequest(message) {
+    try {
+      const result = this.onServerRequest
+        ? await this.onServerRequest(message)
+        : defaultServerRequestResult(message);
+      if (result === null || result === undefined) {
+        this.respondError(message.id, `Unsupported Codex app-server request: ${message.method}`, -32601);
+        return;
+      }
+      this.respond(message.id, result);
+    } catch (error) {
+      this.respondError(message.id, error.message || `Failed to handle ${message.method}`);
+    }
+  }
+
+  rejectAll(error) {
+    for (const [id, pending] of this.pending.entries()) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
+      this.pending.delete(id);
+    }
+  }
+
+  close() {
+    this.stdoutBuffer = Buffer.alloc(0);
+    if (this.child && !this.child.killed) {
+      this.child.kill();
+    }
+  }
+}
+
+function isArchivedOrDeletedDesktopThread(thread = null) {
+  if (!thread || typeof thread !== 'object') {
+    return true;
+  }
+  const status = String(thread.status || '').toLowerCase();
+  const archivedAt = String(thread.archivedAt || thread.deletedAt || thread.archived_at || thread.deleted_at || '').trim();
+  const deletedFlag = Boolean(thread.deleted) || Boolean(thread.isDeleted) || status === 'deleted' || status === 'archived';
+  const archivedFlag = Boolean(thread.archived) || Boolean(thread.isArchived) || status === 'archived';
+  return deletedFlag || archivedFlag || Boolean(archivedAt);
+}
+
+export async function createCodexAppServerClient(options = {}) {
+  const client = new CodexAppServerClient(options);
+  try {
+    await client.initialize();
+    return client;
+  } catch (error) {
+    const fallbackTransport = client.transport.mode === 'desktop-proxy' && isDesktopProxyConnectionFailure(error)
+      ? desktopProxyFailureFallbackTransport(options.env || process.env, options)
+      : null;
+    client.close();
+    if (!fallbackTransport) {
+      throw error;
+    }
+    const fallbackClient = new CodexAppServerClient({
+      ...options,
+      transport: fallbackTransport
+    });
+    try {
+      await fallbackClient.initialize();
+      return fallbackClient;
+    } catch (fallbackError) {
+      fallbackClient.close();
+      throw fallbackError;
+    }
+  }
+}
+
+export async function getDesktopBridgeStatus({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && bridgeStatusCache && now - bridgeStatusCache.checkedAt < BRIDGE_STATUS_CACHE_MS) {
+    return bridgeStatusCache.status;
+  }
+  const transport = resolveAppServerTransport(process.env, { allowHeadlessLocal: true });
+  const ipc = await probeDesktopIpc({ timeoutMs: 1200 }).catch((error) => ({
+    connected: false,
+    mode: 'desktop-ipc',
+    socketPath: null,
+    reason: error.message
+  }));
+  if (ipc.connected) {
+    const status = {
+      strict: true,
+      connected: true,
+      mode: 'desktop-ipc',
+      reason: null,
+      socketPath: ipc.socketPath || null,
+      checkedAt: new Date(now).toISOString(),
+      capabilities: {
+        read: true,
+        sendToOpenDesktopThread: true,
+        createThread: false,
+        createThreadReason: '当前 Codex Desktop IPC 只暴露已有线程接管入口，还没有开放外部新建桌面线程入口。',
+        createThreadViaBackground: true,
+        backgroundCodex: true
+      }
+    };
+    bridgeStatusCache = { checkedAt: now, status };
+    return status;
+  }
+  const base = {
+    strict: transport.strict,
+    connected: false,
+    mode: transport.mode,
+    reason: transport.reason || ipc.reason,
+    socketPath: transport.sockPath || null,
+    checkedAt: new Date(now).toISOString(),
+    capabilities: {
+      read: false,
+      sendToOpenDesktopThread: false,
+      createThread: false
+    }
+  };
+  if (transport.mode === 'unavailable') {
+    bridgeStatusCache = { checkedAt: now, status: base };
+    return base;
+  }
+
+  const client = new CodexAppServerClient({
+    clientInfo: { name: 'CodexMobileBridgeProbe', title: null, version: '0.1.0' },
+    transport
+  });
+  try {
+    await client.initialize();
+    await client.request('thread/loaded/list', { limit: 1 }, { timeoutMs: 1500 }).catch(() => null);
+    const status = {
+      ...base,
+      connected: true,
+      reason: transport.mode === 'isolated-dev' || transport.mode === 'headless-local' ? transport.reason : null,
+      capabilities: {
+        read: true,
+        sendToOpenDesktopThread: transport.mode === 'desktop-proxy',
+        createThread: transport.mode !== 'isolated-dev',
+        headless: transport.mode === 'headless-local',
+        backgroundCodex: transport.mode === 'headless-local'
+      }
+    };
+    bridgeStatusCache = { checkedAt: now, status };
+    return status;
+  } catch (error) {
+    const status = {
+      ...base,
+      connected: false,
+      reason: error.message || transport.reason || '桌面端 Codex app-server 连接失败'
+    };
+    bridgeStatusCache = { checkedAt: now, status };
+    return status;
+  } finally {
+    client.close();
+  }
+}
+
+export function desktopThreadListRequestParams({ cursor = null, limit = 100, archived = false } = {}) {
+  return {
+    cursor,
+    limit,
+    sortKey: 'updated_at',
+    sortDirection: 'desc',
+    archived: Boolean(archived)
+  };
+}
+
+export function filterDesktopThreadsForArchiveMode(threads = [], { archived = false } = {}) {
+  const rawThreads = Array.isArray(threads) ? threads : [];
+  if (archived) {
+    return rawThreads.filter((thread) => thread?.id);
+  }
+  return rawThreads.filter((thread) => !isArchivedOrDeletedDesktopThread(thread));
+}
+
+export async function listDesktopThreads({ limit = 1000, pageSize = 100, archived = false } = {}) {
+  const client = await createCodexAppServerClient({
+    clientInfo: { name: 'CodexMobileList', title: null, version: '0.1.0' },
+    allowReadOnlyIsolated: true
+  });
+  try {
+    const threads = [];
+    let cursor = null;
+    while (threads.length < limit) {
+      const response = await client.request('thread/list', desktopThreadListRequestParams({
+        cursor,
+        limit: Math.min(pageSize, limit - threads.length),
+        archived
+      }), { timeoutMs: 20_000 });
+      const rawData = Array.isArray(response?.data) ? response.data : [];
+      const data = filterDesktopThreadsForArchiveMode(rawData, { archived });
+      threads.push(...data);
+      cursor = response?.nextCursor || null;
+      if (!cursor || !rawData.length) {
+        break;
+      }
+    }
+    return threads;
+  } finally {
+    client.close();
+  }
+}
+
+export async function readDesktopThread(threadId, { includeTurns = true } = {}) {
+  const client = await createCodexAppServerClient({
+    clientInfo: { name: 'CodexMobileRead', title: null, version: '0.1.0' },
+    allowReadOnlyIsolated: true
+  });
+  try {
+    return await client.request('thread/read', {
+      threadId,
+      includeTurns
+    }, { timeoutMs: 20_000 });
+  } finally {
+    client.close();
+  }
+}
+
+export async function setDesktopThreadName(threadId, name) {
+  const client = await createCodexAppServerClient({
+    clientInfo: { name: 'CodexMobileRename', title: null, version: '0.1.0' },
+    allowHeadlessLocal: true
+  });
+  try {
+    const result = await client.request('thread/name/set', {
+      threadId,
+      name
+    }, { timeoutMs: 20_000 });
+    const broadcast = await broadcastDesktopThreadTitleUpdated(threadId, name);
+    if (!broadcast.sent) {
+      console.warn(`[desktop-ipc] title broadcast skipped thread=${threadId}: ${broadcast.reason}`);
+    }
+    return result;
+  } finally {
+    client.close();
+  }
+}
+
+export async function archiveDesktopThread(threadId) {
+  const client = await createCodexAppServerClient({
+    clientInfo: { name: 'CodexMobileArchive', title: null, version: '0.1.0' },
+    allowHeadlessLocal: true
+  });
+  try {
+    const result = await client.request('thread/archive', {
+      threadId
+    }, { timeoutMs: 20_000 });
+    const broadcast = await broadcastDesktopThreadArchived(threadId);
+    if (!broadcast.sent) {
+      console.warn(`[desktop-ipc] archive broadcast skipped thread=${threadId}: ${broadcast.reason}`);
+    }
+    return result;
+  } finally {
+    client.close();
+  }
+}
+
+export async function unarchiveDesktopThread(threadId) {
+  const client = await createCodexAppServerClient({
+    clientInfo: { name: 'CodexMobileArchive', title: null, version: '0.1.0' },
+    allowHeadlessLocal: true
+  });
+  try {
+    const result = await client.request('thread/unarchive', {
+      threadId
+    }, { timeoutMs: 20_000 });
+    const broadcast = await broadcastDesktopThreadUnarchived(threadId);
+    if (!broadcast.sent) {
+      console.warn(`[desktop-ipc] unarchive broadcast skipped thread=${threadId}: ${broadcast.reason}`);
+    }
+    return result;
+  } finally {
+    client.close();
+  }
+}
+
+export async function notifyDesktopThreadListChanged({
+  threadId = '',
+  cwd = null,
+  hostId = 'local',
+  reason = 'thread-list-refresh'
+} = {}) {
+  const broadcast = await broadcastDesktopThreadListRefresh({
+    hostId,
+    conversationId: threadId || null,
+    cwd,
+    reason
+  });
+  if (!broadcast.sent) {
+    console.warn(`[desktop-ipc] thread list refresh skipped thread=${threadId || ''}: ${broadcast.reason}`);
+  }
+  return broadcast;
+}

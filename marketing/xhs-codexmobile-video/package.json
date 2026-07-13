@@ -1,0 +1,19 @@
+{
+  "name": "codexmobile-xhs-video",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "still": "remotion still src/index.ts CodexMobileXhs out/codexmobile-xhs-frame-180.png --frame=180 --scale=0.5",
+    "render": "remotion render src/index.ts CodexMobileXhs out/codexmobile-xhs-showcase.mp4 --codec=h264 --pixel-format=yuv420p"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.383",
+    "remotion": "^4.0.383",
+    "typescript": "^5.8.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {}
+}

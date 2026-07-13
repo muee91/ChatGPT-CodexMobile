@@ -1,0 +1,55 @@
+# Dependencies and build output
+node_modules/
+client/dist/
+dist/
+coverage/
+.vite/
+.cache/
+.gradle-work/
+.specstory/
+.vscode/
+playwright-report/
+test-results/
+
+# Local runtime state, uploads, generated files, pairing tokens, logs
+.codexmobile/
+.playwright-mcp/
+.tmp*
+.tmp*/
+_tmp*
+output/
+NUL
+Microsoft/
+codexmobile-*.png
+!docs/images/codexmobile-demo-*.png
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment files
+.env
+.env.*
+!.env.example
+*.local
+
+# Certificates, keys, and other private credentials
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+*.jks
+*.keystore
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+android/.idea/
+android/app/build/
+*.tar.gz
+local-conversation-*.js
+sidebar-thread-list-signals-*.js

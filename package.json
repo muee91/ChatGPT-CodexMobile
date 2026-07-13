@@ -1,0 +1,51 @@
+{
+  "name": "codexmobile",
+  "version": "2.0.5",
+  "description": "Private cross-device Codex PWA workbench for local sessions, desktop sync, queues, Git, skills, and private-network notifications.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev:server": "node server/index.js",
+    "dev:client": "vite --host 0.0.0.0 --config client/vite.config.js",
+    "build": "vite build --config client/vite.config.js",
+    "start": "node server/index.js",
+    "start:env": "node --env-file=.env server/index.js",
+    "start:bg": "node scripts/start-server.mjs",
+    "up": "node scripts/up.mjs",
+    "codex:compat": "node scripts/check-codex-compat.mjs",
+    "pair": "node scripts/pair.mjs",
+    "android:sync": "npm run build && cap sync android",
+    "android:build": "npm run android:sync && export JAVA_HOME=${JAVA_HOME:-/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home} && export PATH=\"$JAVA_HOME/bin:$PATH\" && cd android && ./gradlew assembleDebug",
+    "mac:autostart": "node scripts/install-macos-autostart.mjs",
+    "mac:autostart:remove": "node scripts/install-macos-autostart.mjs --uninstall",
+    "asr:start": "node scripts/start-asr.mjs",
+    "postinstall": "node scripts/patch-codex-sdk.mjs",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@openai/codex-sdk": "0.144.3",
+    "@vitejs/plugin-react": "^4.6.0",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.515.0",
+    "mammoth": "^1.12.0",
+    "mermaid": "^11.15.0",
+    "opencc-js": "^1.0.5",
+    "pdfjs-dist": "^5.7.284",
+    "qr-scanner": "^1.4.2",
+    "qrcode": "^1.5.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
+    "vite": "7.3.6",
+    "web-push": "^3.6.7",
+    "ws": "8.21.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.2/xlsx-0.20.2.tgz"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.3.4"
+  }
+}

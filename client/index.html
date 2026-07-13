@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f7f7f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f7f7f4" data-app-theme-color />
+    <meta name="description" content="本机 Codex 移动工作台：在 iPhone 上接管桌面线程、追问运行任务、查看完整执行过程和接收完成通知。" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="CodexMobile" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" data-app-status-bar-style />
+    <script>
+      (() => {
+        try {
+          const theme = localStorage.getItem('codexmobile.theme') === 'dark' ? 'dark' : 'light';
+          document.documentElement.dataset.theme = theme;
+          document.querySelector('meta[data-app-theme-color]')?.setAttribute('content', theme === 'dark' ? '#000000' : '#f7f7f4');
+          document.querySelector('meta[data-app-status-bar-style]')?.setAttribute('content', theme === 'dark' ? 'black-translucent' : 'default');
+        } catch {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/codex-icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/codex-icon-180.png" />
+    <title>CodexMobile</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

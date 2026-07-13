@@ -1,0 +1,11 @@
+{
+  "name": "codexmobile-real-ui-screenshots",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "node generate.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.57.0"
+  }
+}

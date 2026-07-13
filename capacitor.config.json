@@ -1,0 +1,12 @@
+{
+  "appId": "io.github.muee91.chatgptcodexmobile",
+  "appName": "ChatGPT CodexMobile",
+  "webDir": "client/dist",
+  "server": {
+    "cleartext": true,
+    "androidScheme": "http"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

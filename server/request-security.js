@@ -47,20 +47,22 @@ export function extractCookieToken(req) {
   return parseCookies(req.headers?.cookie || '')[AUTH_COOKIE] || '';
 }
 
-export function extractRequestToken(req, { allowBearer = false } = {}) {
+export function extractRequestToken(req, { allowBearer = false, allowQuery = false } = {}) {
   const cookieToken = extractCookieToken(req);
   if (cookieToken) {
-    return { token: cookieToken, source: cookieToken ? 'cookie' : '' };
+    return { token: cookieToken, source: 'cookie' };
   }
-  try {
-    const host = String(req.headers?.host || '127.0.0.1').split(',')[0].trim() || '127.0.0.1';
-    const url = new URL(req.url || '/', `http://${host}`);
-    const queryToken = String(url.searchParams.get('token') || '').trim();
-    if (queryToken) {
-      return { token: queryToken, source: 'query' };
+  if (allowQuery) {
+    try {
+      const host = String(req.headers?.host || '127.0.0.1').split(',')[0].trim() || '127.0.0.1';
+      const url = new URL(req.url || '/', `http://${host}`);
+      const queryToken = String(url.searchParams.get('token') || '').trim();
+      if (queryToken) {
+        return { token: queryToken, source: 'query' };
+      }
+    } catch {
+      // ignore malformed URL
     }
-  } catch {
-    // ignore malformed URL
   }
   if (!allowBearer) {
     return { token: '', source: '' };

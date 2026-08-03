@@ -29,6 +29,7 @@
     "mac:autostart:remove": "node scripts/install-macos-autostart.mjs --uninstall",
     "asr:start": "node scripts/start-asr.mjs",
     "postinstall": "node scripts/patch-codex-sdk.mjs",
+    "test": "node --test tests/*.test.mjs",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {

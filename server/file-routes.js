@@ -5,7 +5,7 @@
  *
  * Exports:
  * - createFileRouteHandler — 返回文件 API 处理函数。
- * - isReadonlyLocalFileRoute — 判断无需登录即可读取的本地文件/转换预览路由。
+ * - isReadonlyLocalFileRoute — 保留给 server/index 的认证前路由判断；本地文件读取必须在认证后处理。
  *
  * Inward（本模块依赖/组装的关键符号）: http-utils、file-browser、file-search、upload-service。
  *
@@ -21,12 +21,18 @@ import {
 import { searchProjectFiles as defaultSearchProjectFiles } from './file-search.js';
 import { saveUpload as defaultSaveUpload } from './upload-service.js';
 
-export function isReadonlyLocalFileRoute(method = 'GET', pathname = '') {
+function isLocalFileReadRoute(method = 'GET', pathname = '') {
   return (method || 'GET') === 'GET' && (
     pathname === '/api/local-file' ||
     String(pathname || '').startsWith('/api/local-file/') ||
     pathname === '/api/local-file-preview'
   );
+}
+
+export function isReadonlyLocalFileRoute() {
+  // server/index invokes this predicate before requireAuth(). Returning false keeps
+  // local-file reads on the normal authenticated route path without changing the API.
+  return false;
 }
 
 export function createFileRouteHandler({
@@ -59,7 +65,7 @@ export function createFileRouteHandler({
       return true;
     }
 
-    if (isReadonlyLocalFileRoute(method, pathname)) {
+    if (isLocalFileReadRoute(method, pathname)) {
       if (pathname === '/api/local-file-preview') {
         await staticService.sendLocalFilePreview(req, res, url);
         return true;

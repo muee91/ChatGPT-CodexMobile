@@ -36,7 +36,7 @@ const DEFAULT_CONTROL_SOCKET = path.join(os.homedir(), '.codex', 'app-server-con
 const BRIDGE_STATUS_CACHE_MS = 2500;
 const MAX_STDOUT_LINE_BYTES = Math.max(
   256 * 1024,
-  Number(process.env.CODEXMOBILE_APP_SERVER_MAX_STDOUT_LINE_BYTES) || 8 * 1024 * 1024
+  Number(process.env.CODEXMOBILE_APP_SERVER_MAX_STDOUT_LINE_BYTES) || 64 * 1024 * 1024
 );
 
 let bridgeStatusCache = null;
@@ -252,9 +252,12 @@ export class CodexAppServerClient {
       CODEXMOBILE_ALLOW_ISOLATED_CODEX: allowReadOnlyIsolated ? '1' : env.CODEXMOBILE_ALLOW_ISOLATED_CODEX
     }, { allowHeadlessLocal });
     this.child = null;
-    this.stdoutBuffer = Buffer.alloc(0);
+    this.stdoutChunks = [];
+    this.stdoutBufferedBytes = 0;
     this.nextId = 1;
     this.pending = new Map();
+    this.activeServerRequestIds = new Set();
+    this.resolvedServerRequestIds = new Set();
     this.stderr = '';
     this.closed = new Promise((resolve) => {
       this.resolveClosed = resolve;
@@ -304,39 +307,49 @@ export class CodexAppServerClient {
     if (!input.length) {
       return;
     }
-    this.stdoutBuffer = this.stdoutBuffer.length
-      ? Buffer.concat([this.stdoutBuffer, input])
-      : Buffer.from(input);
-    if (this.stdoutBuffer.length > MAX_STDOUT_LINE_BYTES) {
-      const error = responseError(
-        `Codex app-server stdout line exceeded ${MAX_STDOUT_LINE_BYTES} bytes without a newline`,
-        'app-server-stdout'
-      );
-      this.rejectAll(error);
-      this.close();
-      return;
-    }
-    for (;;) {
-      const newlineIndex = this.stdoutBuffer.indexOf(0x0a);
+    let offset = 0;
+    while (offset < input.length) {
+      const newlineIndex = input.indexOf(0x0a, offset);
+      const fragmentEnd = newlineIndex < 0 ? input.length : newlineIndex;
+      if (!this.appendStdoutFragment(input.subarray(offset, fragmentEnd))) {
+        return;
+      }
       if (newlineIndex < 0) {
         return;
       }
-      const rawLine = this.stdoutBuffer.subarray(0, newlineIndex);
-      this.stdoutBuffer = this.stdoutBuffer.subarray(newlineIndex + 1);
+      const rawLine = this.stdoutChunks.length === 1
+        ? this.stdoutChunks[0]
+        : Buffer.concat(this.stdoutChunks, this.stdoutBufferedBytes);
+      this.clearStdoutBuffer();
       const line = rawLine.length && rawLine.at(-1) === 0x0d
         ? rawLine.subarray(0, rawLine.length - 1)
         : rawLine;
-      if (line.length > MAX_STDOUT_LINE_BYTES) {
-        const error = responseError(
-          `Codex app-server stdout line exceeded ${MAX_STDOUT_LINE_BYTES} bytes`,
-          'app-server-stdout'
-        );
-        this.rejectAll(error);
-        this.close();
-        return;
-      }
       this.handleLine(line.toString('utf8'));
+      offset = newlineIndex + 1;
     }
+  }
+
+  appendStdoutFragment(fragment) {
+    if (!fragment.length) {
+      return true;
+    }
+    this.stdoutChunks.push(fragment);
+    this.stdoutBufferedBytes += fragment.length;
+    if (this.stdoutBufferedBytes <= MAX_STDOUT_LINE_BYTES) {
+      return true;
+    }
+    const error = responseError(
+      `Codex app-server stdout line exceeded ${MAX_STDOUT_LINE_BYTES} bytes without a newline`,
+      'app-server-stdout'
+    );
+    this.rejectAll(error);
+    this.close();
+    return false;
+  }
+
+  clearStdoutBuffer() {
+    this.stdoutChunks = [];
+    this.stdoutBufferedBytes = 0;
   }
 
   async initialize() {
@@ -416,23 +429,41 @@ export class CodexAppServerClient {
       return;
     }
 
+    if (message.method === 'serverRequest/resolved') {
+      const requestId = String(message.params?.requestId ?? '');
+      if (requestId && this.activeServerRequestIds.has(requestId)) {
+        this.resolvedServerRequestIds.add(requestId);
+      }
+    }
+
     if (message.method && this.onNotification) {
       this.onNotification(message);
     }
   }
 
   async handleServerRequest(message) {
+    const requestId = String(message.id ?? '');
+    this.activeServerRequestIds.add(requestId);
     try {
       const result = this.onServerRequest
         ? await this.onServerRequest(message)
         : defaultServerRequestResult(message);
+      if (this.resolvedServerRequestIds.has(requestId)) {
+        return;
+      }
       if (result === null || result === undefined) {
         this.respondError(message.id, `Unsupported Codex app-server request: ${message.method}`, -32601);
         return;
       }
       this.respond(message.id, result);
     } catch (error) {
+      if (this.resolvedServerRequestIds.has(requestId)) {
+        return;
+      }
       this.respondError(message.id, error.message || `Failed to handle ${message.method}`);
+    } finally {
+      this.activeServerRequestIds.delete(requestId);
+      this.resolvedServerRequestIds.delete(requestId);
     }
   }
 
@@ -445,7 +476,9 @@ export class CodexAppServerClient {
   }
 
   close() {
-    this.stdoutBuffer = Buffer.alloc(0);
+    this.clearStdoutBuffer();
+    this.activeServerRequestIds.clear();
+    this.resolvedServerRequestIds.clear();
     if (this.child && !this.child.killed) {
       this.child.kill();
     }

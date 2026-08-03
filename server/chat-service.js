@@ -486,6 +486,14 @@ export function createChatService({
     });
   }
 
+  function resolveCodexInteraction(job, params = {}, context = {}) {
+    return interactionBroker.resolveFromAppServer({
+      requestId: params.requestId,
+      sessionId: params.threadId || context.sessionId || job.selectedSessionId || job.draftSessionId || '',
+      turnId: context.turnId || job.turnId || ''
+    });
+  }
+
   const { scheduleAutoNameCompletedSession } = createChatAutoNamer({
     getTurn: chatQueue.getTurn,
     refreshCodexCache,
@@ -584,6 +592,7 @@ export function createChatService({
       triggerDesktopRefreshForThread,
       reportDesktopSyncStatus: (payload) => reportDesktopSyncStatus({ projectId: job.project.id, ...payload }),
       requestCodexInteraction,
+      resolveCodexInteraction,
       emitJobEvent,
       scheduleAutoNameCompletedSession,
       onQueueDrained: () => setTimeout(() => runNextQueuedChat(queueKey), 0)

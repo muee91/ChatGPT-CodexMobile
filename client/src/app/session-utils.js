@@ -570,8 +570,27 @@ function allProjectSessions(sessionsByProject = {}) {
 }
 
 function runtimeFromSession(session) {
-  void session;
-  return null;
+  const runtime = session?.runtime;
+  if (!runtime || !['running', 'queued', 'failed'].includes(String(runtime.status || ''))) {
+    return null;
+  }
+  return {
+    ...runtime,
+    source: runtime.source || 'codex-app-server',
+    sessionId: runtime.sessionId || session.id || null,
+    updatedAt: session.runtimeObservedAt || runtime.updatedAt || new Date().toISOString(),
+    fromSessionIndex: true,
+    authoritative: session.runtimeAuthoritative === true
+  };
+}
+
+function runtimeTime(value) {
+  const timestamp = new Date(value || 0).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function runtimeMatchesSession(key, runtime, sessionId) {
+  return String(key || '') === sessionId || String(runtime?.sessionId || '') === sessionId;
 }
 
 export function reconcileThreadRuntimeWithSessions(threadRuntimeById = {}, sessionsByProject = {}) {
@@ -580,16 +599,27 @@ export function reconcileThreadRuntimeWithSessions(threadRuntimeById = {}, sessi
     return threadRuntimeById || {};
   }
 
-  const loadedSessionIds = new Set(sessions.map((session) => session?.id).filter(Boolean));
   const next = { ...(threadRuntimeById || {}) };
-  for (const [key, runtime] of Object.entries(next)) {
-    const sessionId = runtime?.sessionId || (loadedSessionIds.has(key) ? key : '');
-    if (sessionId && loadedSessionIds.has(sessionId) && isSessionIndexRuntime(runtime)) {
-      delete next[key];
-    }
-  }
 
   for (const session of sessions) {
+    const sessionId = String(session?.id || '').trim();
+    if (!sessionId) {
+      continue;
+    }
+    const authoritativeAt = session.runtimeAuthoritative === true
+      ? runtimeTime(session.runtimeObservedAt)
+      : 0;
+    for (const [key, runtime] of Object.entries(next)) {
+      if (!runtimeMatchesSession(key, runtime, sessionId)) {
+        continue;
+      }
+      const staleIndexHint = isSessionIndexRuntime(runtime);
+      const supersededByOfficialState = authoritativeAt > 0 && runtimeTime(runtime?.updatedAt) <= authoritativeAt;
+      if (staleIndexHint || supersededByOfficialState) {
+        delete next[key];
+      }
+    }
+
     const runtime = runtimeFromSession(session);
     if (!runtime) {
       continue;
@@ -619,7 +649,7 @@ export function sessionRunBadgeState(session, {
     return null;
   }
   const keys = sessionRunKeys(session);
-  const runtimes = keys.map((key) => threadRuntimeById?.[key]).filter(isLiveThreadRuntime);
+  const runtimes = keys.map((key) => threadRuntimeById?.[key]).filter(Boolean);
   if (runtimes.some((runtime) => runtime?.status === 'running') || hasRunningKey(runningById, keys)) {
     return 'running';
   }

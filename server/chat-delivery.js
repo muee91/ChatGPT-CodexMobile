@@ -53,6 +53,7 @@ export function runQueuedHeadlessChatJob({
   triggerDesktopRefreshForThread,
   reportDesktopSyncStatus = () => null,
   requestCodexInteraction,
+  resolveCodexInteraction,
   emitJobEvent,
   scheduleAutoNameCompletedSession,
   onQueueDrained
@@ -184,6 +185,9 @@ export function runQueuedHeadlessChatJob({
       turnId: job.turnId,
       onCodexServerRequest: requestCodexInteraction
         ? (appMessage, context) => requestCodexInteraction(job, appMessage, context)
+        : null,
+      onCodexServerRequestResolved: resolveCodexInteraction
+        ? (params, context) => resolveCodexInteraction(job, params, context)
         : null
     },
     (payload) => {

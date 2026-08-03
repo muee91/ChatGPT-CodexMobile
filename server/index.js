@@ -17,7 +17,6 @@ import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { WebSocketServer } from 'ws';
 import {
@@ -118,21 +117,25 @@ import { createPushService } from './push-service.js';
 import { renderPairingQrPage } from './pairing-qr-page.js';
 import { createStaticService } from './static-service.js';
 import { createSyncBridge } from './sync/sync-bridge.js';
+import {
+  CODEXMOBILE_DATA_ROOT,
+  CODEXMOBILE_RUNTIME_ROOT,
+  CODEXMOBILE_SOURCE_ROOT
+} from './runtime-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '..');
-configureRuntimeDebug({ rootDir: ROOT_DIR });
-configureDesktopRefresh({ rootDir: ROOT_DIR });
+const ROOT_DIR = CODEXMOBILE_SOURCE_ROOT;
+configureRuntimeDebug({ rootDir: CODEXMOBILE_DATA_ROOT });
+configureDesktopRefresh({ rootDir: CODEXMOBILE_DATA_ROOT });
 const CLIENT_DIST = path.join(ROOT_DIR, 'client', 'dist');
-const UPLOAD_ROOT = path.join(ROOT_DIR, '.codexmobile', 'uploads');
-const IMAGE_PROMPT_STATE = path.join(ROOT_DIR, '.codexmobile', 'state', 'image-prompts.json');
-const FEISHU_AUTH_STATE = path.join(ROOT_DIR, '.codexmobile', 'state', 'feishu-auth.json');
-const PUSH_STATE = path.join(ROOT_DIR, '.codexmobile', 'state', 'push-notifications.json');
+const UPLOAD_ROOT = path.join(CODEXMOBILE_RUNTIME_ROOT, 'uploads');
+const IMAGE_PROMPT_STATE = path.join(CODEXMOBILE_RUNTIME_ROOT, 'state', 'image-prompts.json');
+const FEISHU_AUTH_STATE = path.join(CODEXMOBILE_RUNTIME_ROOT, 'state', 'feishu-auth.json');
+const PUSH_STATE = path.join(CODEXMOBILE_RUNTIME_ROOT, 'state', 'push-notifications.json');
 const PORT = Number(process.env.PORT || 3321);
 const HOST = process.env.HOST || '0.0.0.0';
 const HTTPS_PORT = Number(process.env.HTTPS_PORT || 3443);
-const HTTPS_PFX_PATH = process.env.HTTPS_PFX_PATH || path.join(ROOT_DIR, '.codexmobile', 'tls', 'server.pfx');
-const HTTPS_ROOT_CA_PATH = process.env.HTTPS_ROOT_CA_PATH || path.join(ROOT_DIR, '.codexmobile', 'tls', 'codexmobile-root-ca.cer');
+const HTTPS_PFX_PATH = process.env.HTTPS_PFX_PATH || path.join(CODEXMOBILE_RUNTIME_ROOT, 'tls', 'server.pfx');
+const HTTPS_ROOT_CA_PATH = process.env.HTTPS_ROOT_CA_PATH || path.join(CODEXMOBILE_RUNTIME_ROOT, 'tls', 'codexmobile-root-ca.cer');
 const HTTPS_PFX_PASSPHRASE = process.env.HTTPS_PFX_PASSPHRASE || 'codexmobile-local-https';
 const PUBLIC_URL = process.env.CODEXMOBILE_PUBLIC_URL || '';
 const FEISHU_APP_ID = String(process.env.CODEXMOBILE_FEISHU_APP_ID || '').trim();

@@ -203,7 +203,7 @@ function isoFromThreadTime(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function desktopThreadRuntime(thread, contextState = {}) {
+function desktopThreadRuntime(thread, contextState = {}, observedAt = null) {
   const runtime = publicRuntimeState(contextState.runtime, thread?.id);
   if (runtime) {
     return runtime;
@@ -213,16 +213,32 @@ function desktopThreadRuntime(thread, contextState = {}) {
     ? thread.status.type || thread.status.status || thread.status.phase
     : thread?.status;
   const status = String(rawStatus || '').trim().toLowerCase();
-  if (!['running', 'queued', 'pending', 'streaming', 'in_progress', 'in-progress', 'busy'].includes(status)) {
+  const activeFlags = Array.isArray(thread?.status?.activeFlags)
+    ? thread.status.activeFlags.map((flag) => String(flag || '').trim()).filter(Boolean)
+    : [];
+  if (status === 'systemerror' || status === 'system_error' || status === 'system-error') {
+    return {
+      status: 'failed',
+      source: 'codex-app-server',
+      sessionId: thread.id,
+      turnId: thread.turnId || null,
+      startedAt: null,
+      updatedAt: observedAt || new Date().toISOString(),
+      activeFlags,
+      steerable: false
+    };
+  }
+  if (!['active', 'running', 'queued', 'pending', 'streaming', 'in_progress', 'in-progress', 'busy'].includes(status)) {
     return null;
   }
   return {
-    status: 'running',
-    source: 'desktop-thread',
+    status: status === 'queued' || status === 'pending' ? 'queued' : 'running',
+    source: 'codex-app-server',
     sessionId: thread.id,
     turnId: thread.turnId || null,
     startedAt: isoFromThreadTime(thread.startedAt) || null,
-    updatedAt: isoFromThreadTime(thread.updatedAt) || new Date().toISOString(),
+    updatedAt: observedAt || new Date().toISOString(),
+    activeFlags,
     steerable: false
   };
 }
@@ -264,6 +280,8 @@ async function sessionFromDesktopThread({
   const mobileMessages = Array.isArray(mobileSession?.messages) ? mobileSession.messages : [];
   const contextState = thread.skipContextState ? { sessionId: thread.id } : await readRolloutContextState(thread.path, thread.id);
   const subAgentMeta = subAgentMetaFromThread(thread, spawnEdge);
+  const runtimeAuthoritative = thread.statusAuthoritative === true;
+  const runtimeObservedAt = runtimeAuthoritative ? new Date().toISOString() : null;
   return {
     id: thread.id,
     cwd: resolvedCwd,
@@ -285,7 +303,9 @@ async function sessionFromDesktopThread({
     projectlessRegistered,
     mobileSessionKnown: Boolean(mobileSession),
     filePath: thread.path || null,
-    runtime: desktopThreadRuntime(thread, contextState),
+    runtime: desktopThreadRuntime(thread, contextState, runtimeObservedAt),
+    runtimeAuthoritative,
+    runtimeObservedAt,
     context: publicContextState(contextState, configContext)
   };
 }

@@ -36,6 +36,22 @@ test('pairingRequestFromSearch parses terminal pairing links safely', () => {
   assert.equal(pairingRequestFromSearch('?code=JQUTZFC74Q'), null);
 });
 
+test('pairingRequestFromSearch keeps the current web origin for automatic pairing', () => {
+  assert.deepEqual(
+    pairingRequestFromSearch(
+      '?requestId=req-1&code=jqut-zfc7-4q&codeLength=10',
+      { origin: 'http://192.168.10.133:3321' }
+    ),
+    {
+      requestId: 'req-1',
+      code: 'JQUTZFC74Q',
+      codeLength: 10,
+      autoSubmit: true,
+      serverUrl: 'http://192.168.10.133:3321'
+    }
+  );
+});
+
 test('pairingRequestFromText parses full QR URLs and keeps server origin', () => {
   assert.deepEqual(
     pairingRequestFromText('http://192.168.10.133:3321/pair?requestId=req-2&code=ABCD-EFGH-JK&codeLength=10'),

@@ -471,3 +471,33 @@ test('session index builder exposes desktop runtime from rollout state', async (
   assert.equal(session.runtime.sessionId, 'thread-running');
   assert.equal(session.runtime.turnId, 'turn-running');
 });
+
+test('session index builder maps official active ThreadStatus into authoritative runtime', async () => {
+  const projectA = '/tmp/codexmobile-project-official-runtime';
+  const projectAId = projectIdFor(projectA);
+
+  const index = await buildSessionIndex({
+    config: { projects: [{ path: projectA, trustLevel: 'trusted' }], context: {} },
+    workspaceState: { projects: [], projectlessThreadIds: [], threadWorkspaceRootHints: {} },
+    mobileSessionIndex: new Map(),
+    hiddenSessionIds: new Set(),
+    desktopThreads: [{
+      id: 'thread-active',
+      cwd: projectA,
+      name: 'active',
+      updatedAt: 1_800_000_000,
+      source: 'vscode',
+      status: { type: 'active', activeFlags: ['waitingOnApproval'] },
+      statusAuthoritative: true
+    }],
+    readRolloutContextState: async (_filePath, sessionId) => ({ sessionId }),
+    pathExists: () => true
+  });
+
+  const [session] = index.sessionsByProject.get(projectAId);
+  assert.equal(session.runtimeAuthoritative, true);
+  assert.equal(session.runtime.status, 'running');
+  assert.equal(session.runtime.source, 'codex-app-server');
+  assert.deepEqual(session.runtime.activeFlags, ['waitingOnApproval']);
+  assert.ok(session.runtimeObservedAt);
+});

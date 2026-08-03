@@ -3,6 +3,8 @@ node_modules/
 client/dist/
 dist/
 coverage/
+release/
+.playwright-cli/
 .vite/
 .cache/
 .gradle-work/

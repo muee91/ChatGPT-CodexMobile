@@ -39,6 +39,54 @@ test('Codex app-server stdout parser preserves split JSON-RPC lines', () => {
   client.close();
 });
 
+test('Codex app-server stdout parser accepts complete JSON-RPC lines larger than the legacy 8 MiB limit', () => {
+  const client = new CodexAppServerClient({
+    transport: { mode: 'headless-local', strict: false, connected: true, sockPath: null, reason: null }
+  });
+  const lines = [];
+  client.handleLine = (line) => lines.push(line);
+  const largeLine = Buffer.alloc(9 * 1024 * 1024, 0x78);
+
+  client.handleStdoutChunk(largeLine);
+  client.handleStdoutChunk(Buffer.from('\n'));
+
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].length, largeLine.length);
+  client.close();
+});
+
+test('Codex app-server suppresses a late response after serverRequest/resolved', async () => {
+  let resolveRequest;
+  const responses = [];
+  const notifications = [];
+  const client = new CodexAppServerClient({
+    transport: { mode: 'headless-local', strict: false, connected: true, sockPath: null, reason: null },
+    onServerRequest: () => new Promise((resolve) => {
+      resolveRequest = resolve;
+    }),
+    onNotification: (message) => notifications.push(message)
+  });
+  client.respond = (id, result) => responses.push({ id, result });
+  client.respondError = (id, message) => responses.push({ id, error: message });
+
+  const handling = client.handleServerRequest({
+    id: 17,
+    method: 'item/tool/requestUserInput',
+    params: { threadId: 'thread-1' }
+  });
+  await Promise.resolve();
+  client.handleLine(JSON.stringify({
+    method: 'serverRequest/resolved',
+    params: { threadId: 'thread-1', requestId: 17 }
+  }));
+  resolveRequest({ answers: {} });
+  await handling;
+
+  assert.deepEqual(responses, []);
+  assert.equal(notifications.at(-1).method, 'serverRequest/resolved');
+  client.close();
+});
+
 test('desktopThreadListRequestParams passes archived mode through to thread/list', () => {
   assert.deepEqual(desktopThreadListRequestParams({ cursor: 'next', limit: 25, archived: true }), {
     cursor: 'next',

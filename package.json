@@ -2,8 +2,10 @@
   "name": "codexmobile",
   "version": "2.0.5",
   "description": "Private cross-device Codex PWA workbench for local sessions, desktop sync, queues, Git, skills, and private-network notifications.",
+  "author": "muee91",
   "license": "MIT",
   "type": "module",
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev:server": "node server/index.js",
     "dev:client": "vite --host 0.0.0.0 --config client/vite.config.js",
@@ -11,6 +13,13 @@
     "start": "node server/index.js",
     "start:env": "node --env-file=.env server/index.js",
     "start:bg": "node scripts/start-server.mjs",
+    "backend:start": "node scripts/backend-control.mjs start",
+    "backend:stop": "node scripts/backend-control.mjs stop",
+    "backend:restart": "node scripts/backend-control.mjs restart",
+    "backend:status": "node scripts/backend-control.mjs status",
+    "desktop:dev": "npm run build && electron desktop/main.cjs",
+    "desktop:build": "npm run build && electron-builder --mac dir",
+    "desktop:dist": "npm run build && electron-builder --mac dmg zip",
     "up": "node scripts/up.mjs",
     "codex:compat": "node scripts/check-codex-compat.mjs",
     "pair": "node scripts/pair.mjs",
@@ -23,29 +32,63 @@
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
-    "@capacitor/android": "^8.3.4",
-    "@capacitor/core": "^8.3.4",
-    "@openai/codex-sdk": "0.144.3",
-    "@vitejs/plugin-react": "^4.6.0",
     "jszip": "^3.10.1",
-    "lucide-react": "^0.515.0",
     "mammoth": "^1.12.0",
-    "mermaid": "^11.15.0",
     "opencc-js": "^1.0.5",
-    "pdfjs-dist": "^5.7.284",
-    "qr-scanner": "^1.4.2",
     "qrcode": "^1.5.4",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-markdown": "^10.1.0",
-    "remark-breaks": "^4.0.0",
-    "remark-gfm": "^4.0.1",
-    "vite": "7.3.6",
     "web-push": "^3.6.7",
     "ws": "8.21.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.2/xlsx-0.20.2.tgz"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.3.4"
+    "@capacitor/android": "^8.3.4",
+    "@capacitor/cli": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@openai/codex-sdk": "0.146.0",
+    "@vitejs/plugin-react": "^4.6.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "lucide-react": "^0.515.0",
+    "mermaid": "^11.15.0",
+    "pdfjs-dist": "^5.7.284",
+    "qr-scanner": "^1.4.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
+    "vite": "7.3.6"
+  },
+  "build": {
+    "appId": "com.muee91.codexmobile",
+    "productName": "CodexMobile",
+    "asar": false,
+    "directories": {
+      "output": "release/desktop"
+    },
+    "files": [
+      "desktop/**/*",
+      "server/**/*",
+      "scripts/**/*",
+      "shared/**/*",
+      "skills/**/*",
+      "client/dist/**/*",
+      "client/public/codex-icon-180.png",
+      "client/public/codex-icon-512.png",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "client/public/codex-icon-512.png",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "CodexMobile-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "CodexMobile ${version}",
+      "artifactName": "CodexMobile-${version}-${arch}.${ext}"
+    }
   }
 }

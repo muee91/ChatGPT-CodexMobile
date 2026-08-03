@@ -1216,10 +1216,6 @@ export default function App() {
     }
   }, [selectedSession, selectedRunning, showToast]);
 
-  if (!authenticated) {
-    return <PairingScreen pairing={status.pairing} authCanPair={status.auth?.canPair !== false} onPaired={bootstrap} onServerChanged={bootstrap} />;
-  }
-
   const panelProps = useMemo(() => ({
     topBarProps: {
       selectedProject,
@@ -1529,6 +1525,10 @@ export default function App() {
     uploading,
     visibleContextStatus
   ]);
+
+  if (!authenticated) {
+    return <PairingScreen pairing={status.pairing} authCanPair={status.auth?.canPair !== false} onPaired={bootstrap} onServerChanged={bootstrap} />;
+  }
 
   return (
     <AppShell

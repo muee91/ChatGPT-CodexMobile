@@ -16,12 +16,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { provisionalSessionTitle } from '../shared/session-title.js';
+import { CODEXMOBILE_RUNTIME_ROOT } from './runtime-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '..');
-const STATE_DIR = path.join(ROOT_DIR, '.codexmobile', 'state');
+const STATE_DIR = path.join(CODEXMOBILE_RUNTIME_ROOT, 'state');
 const INDEX_PATH = path.join(STATE_DIR, 'mobile-sessions.json');
 const MAX_SESSIONS = 300;
 

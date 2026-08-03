@@ -21,6 +21,7 @@ ChatGPT CodexMobile 是一个面向个人私有部署的跨设备 Codex 工作�
 
 - **Web/PWA：** iPhone、iPad、Android、平板、桌面浏览器，以及同一可信网络中的现代浏览器。
 - **Android：** 基于 Capacitor 的原生壳，支持局域网发现与二维码配对。
+- **macOS 桌面端：** Electron 菜单栏应用，内置 Node 运行时，提供后端启动、停止、重启、日志和本机自动配对。
 - **主机：** 已安装 Node.js 与本地 Codex 的 macOS、Linux 或 Windows 设备。
 
 ### 架构
@@ -78,6 +79,15 @@ npm run android:build
 
 `npm run codex:compat` 会对本机 Codex 二进制执行只读 app-server 初始化与线程列表探测。更新 Codex Desktop 或 CLI 后，建议运行一次。
 
+构建 macOS 桌面 App：
+
+```sh
+npm run desktop:build   # 生成未签名 .app
+npm run desktop:dist    # 生成未签名 DMG 和 ZIP
+```
+
+桌面 App 默认使用公开 `thread/list` 的官方 `ThreadStatus` 作为会话运行态真相；只有 app-server 不可用时才回退本地 JSONL。可临时设置 `CODEXMOBILE_USE_APP_SERVER_THREAD_LIST=0` 禁用该通道。
+
 ### 安全说明
 
 - 配对面向私有网络，使用一次性验证码和可信设备 Cookie。
@@ -88,7 +98,7 @@ npm run android:build
 
 ### 兼容性说明
 
-项目以公开的 Codex app-server 协议作为实时回合状态的主通道。Desktop IPC 是增强能力；由于它属于私有协议，可能随桌面端版本变化。
+项目以公开的 [Codex App Server](https://developers.openai.com/codex/app-server) 协议作为实时回合状态的主通道。`npm run codex:compat` 会生成当前 Codex 的协议 schema，检查项目实际使用的请求、通知与审批回调，并实测初始化、线程列表/读取、模型列表和技能列表。Desktop IPC 只是增强能力；由于它属于私有协议，可能随桌面端版本变化。
 
 ---
 
@@ -113,6 +123,7 @@ It is not a hosted chat service or a remote desktop product. The bridge runs on 
 
 - **Web/PWA:** iPhone, iPad, Android, tablets, desktop browsers, and modern browsers on the same trusted network.
 - **Android:** Capacitor-based native shell with local-network discovery and QR pairing support.
+- **macOS desktop:** Electron menu-bar app with an embedded Node runtime, backend start/stop/restart, log access, and secure local auto-pairing.
 - **Host:** macOS, Linux, or Windows with Node.js and a working local Codex installation.
 
 ### Architecture
@@ -170,6 +181,15 @@ npm run android:build
 
 `npm run codex:compat` performs a read-only app-server initialization and thread-list probe against the local Codex binary. Run it after updating Codex Desktop or the CLI.
 
+Build the macOS desktop app:
+
+```sh
+npm run desktop:build   # unsigned .app
+npm run desktop:dist    # unsigned DMG and ZIP
+```
+
+The desktop app uses the public `thread/list` `ThreadStatus` as the authoritative conversation runtime state and falls back to local JSONL only when app-server is unavailable. Set `CODEXMOBILE_USE_APP_SERVER_THREAD_LIST=0` only as an emergency opt-out.
+
 ### Security
 
 - Pairing is intended for private networks and uses one-time codes plus trusted-device cookies.
@@ -180,7 +200,7 @@ npm run android:build
 
 ### Compatibility
 
-The project prioritizes the public Codex app-server protocol for live turn state. Desktop IPC remains a best-effort enhancement because its private contract may change between desktop releases.
+The project prioritizes the public [Codex App Server](https://developers.openai.com/codex/app-server) protocol for live turn state. `npm run codex:compat` generates the installed Codex schema, checks every request, notification, and approval callback used by CodexMobile, then probes initialization, thread list/read, model list, and skills list. Desktop IPC remains a best-effort enhancement because its private contract may change between desktop releases.
 
 ## License
 

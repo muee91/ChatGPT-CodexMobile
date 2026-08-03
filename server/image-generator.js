@@ -17,14 +17,12 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { readMobileSessionMessages, registerMobileSession } from './mobile-session-index.js';
 import { DEFAULT_OPENAI_COMPATIBLE_BASE_URL, openAICompatibleConfig } from './provider-api.js';
 import { provisionalSessionTitle } from '../shared/session-title.js';
+import { CODEXMOBILE_RUNTIME_ROOT } from './runtime-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '..');
-export const GENERATED_ROOT = path.join(ROOT_DIR, '.codexmobile', 'generated');
+export const GENERATED_ROOT = path.join(CODEXMOBILE_RUNTIME_ROOT, 'generated');
 
 const DEFAULT_IMAGE_BASE_URL = DEFAULT_OPENAI_COMPATIBLE_BASE_URL;
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';

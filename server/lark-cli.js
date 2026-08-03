@@ -18,11 +18,10 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { buildFeishuSkillInstruction } from './feishu-skills.js';
+import { CODEXMOBILE_RUNTIME_ROOT, CODEXMOBILE_SOURCE_ROOT } from './runtime-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = path.resolve(__dirname, '..');
+const ROOT_DIR = CODEXMOBILE_SOURCE_ROOT;
 const LARK_CLI = 'lark-cli';
 const LARK_DOMAIN = 'https://open.feishu.cn';
 const STATUS_CACHE_MS = 1500;
@@ -169,7 +168,7 @@ export function larkCliEnvironment(baseEnv = process.env) {
 async function ensureAgentLarkConfigDir() {
   const sourceRoot = path.join(os.homedir(), '.lark-cli');
   const sourceProfile = path.join(sourceRoot, 'openclaw');
-  const targetRoot = path.join(ROOT_DIR, '.codexmobile', 'lark-cli-agent');
+  const targetRoot = path.join(CODEXMOBILE_RUNTIME_ROOT, 'lark-cli-agent');
   const targetProfile = path.join(targetRoot, 'openclaw');
   const now = Date.now();
 
@@ -196,7 +195,7 @@ async function ensureAgentLarkConfigDir() {
 }
 
 async function ensureLarkCliGuardDir() {
-  const guardDir = path.join(ROOT_DIR, '.codexmobile', 'lark-cli-guard');
+  const guardDir = path.join(CODEXMOBILE_RUNTIME_ROOT, 'lark-cli-guard');
   const guardScript = path.join(ROOT_DIR, 'scripts', 'lark-cli-guard.mjs');
   const cmdPath = path.join(guardDir, 'lark-cli.cmd');
   const nodePath = process.execPath;
@@ -769,7 +768,7 @@ export async function buildCodexLarkCliContext(message = '') {
     if (realCli && realCli !== LARK_CLI) {
       const guardDir = await ensureLarkCliGuardDir();
       env.CODEXMOBILE_REAL_LARK_CLI = realCli;
-      env.CODEXMOBILE_LARK_GUARD_STATE_DIR = path.join(ROOT_DIR, '.codexmobile', 'state');
+      env.CODEXMOBILE_LARK_GUARD_STATE_DIR = path.join(CODEXMOBILE_RUNTIME_ROOT, 'state');
       prependPathEntry(env, guardDir);
     }
   }

@@ -274,7 +274,11 @@ function desktopThreadHasMessages(thread) {
 
 function canFallbackToRollout(error) {
   const message = String(error?.message || '').toLowerCase();
-  return error?.statusCode === 404 || message.includes('thread not loaded') || message.includes('desktop thread not found');
+  return error?.statusCode === 404
+    || error?.method === 'app-server-stdout'
+    || message.includes('app-server stdout')
+    || message.includes('thread not loaded')
+    || message.includes('desktop thread not found');
 }
 
 export function publicContextState(state = {}, configContext = {}) {

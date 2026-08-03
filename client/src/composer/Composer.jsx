@@ -18,7 +18,8 @@ import { apiFetch } from '../api.js';
 import { detectComposerToken, exactSlashCommandForInput, filteredSlashCommands, replaceComposerToken } from '../composer-shortcuts.js';
 import { composerSendState } from '../send-state.js';
 import { compactPath, isDraftSession } from '../app/session-utils.js';
-import { attachmentPreviewUrl, isImageAttachment } from './attachment-preview.js';
+import { isImageAttachment } from './attachment-preview.js';
+import { AttachmentImagePreview } from './AttachmentImagePreview.jsx';
 import { filesFromClipboardData } from './paste-files.js';
 import { createSubmittedInputGuard } from './input-echo-guard.js';
 import { ContextStatusButton, ContextStatusDetails } from './ContextStatus.jsx';
@@ -905,14 +906,9 @@ function ComposerView({
             ) : null}
             {attachments.map((attachment) => {
               if (isImageAttachment(attachment)) {
-                const previewUrl = attachmentPreviewUrl(attachment);
                 return (
                   <span key={attachment.id} className="attachment-preview-card">
-                    {previewUrl ? (
-                      <img src={previewUrl} alt={attachment.name || '图片附件'} loading="lazy" />
-                    ) : (
-                      <span className="attachment-preview-empty"><Image size={18} /></span>
-                    )}
+                    <AttachmentImagePreview attachment={attachment} />
                     <span className="attachment-preview-meta">
                       <span>{attachment.name || '图片'}</span>
                       <small>{formatBytes(attachment.size)}</small>

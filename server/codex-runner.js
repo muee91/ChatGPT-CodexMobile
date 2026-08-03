@@ -839,7 +839,7 @@ function abortError() {
   return error;
 }
 
-export async function runCodexTurn({ sessionId, draftSessionId, projectPath, message, attachments = [], selectedSkills = [], model, reasoningEffort, serviceTier, permissionMode, collaborationMode = null, turnId: providedTurnId, onCodexServerRequest = null }, emit) {
+export async function runCodexTurn({ sessionId, draftSessionId, projectPath, message, attachments = [], selectedSkills = [], model, reasoningEffort, serviceTier, permissionMode, collaborationMode = null, turnId: providedTurnId, onCodexServerRequest = null, onCodexServerRequestResolved = null }, emit) {
   const workingDirectory = await ensureAsciiWorkingDirectory(projectPath);
   const { sandboxMode, approvalPolicy } = mapPermissionMode(permissionMode);
   const feishuSkillKeys = detectFeishuSkillKeys(message);
@@ -970,6 +970,12 @@ export async function runCodexTurn({ sessionId, draftSessionId, projectPath, mes
         }
         if (appMessage.method === 'turn/started' && params.turn?.id) {
           run.appTurnId = params.turn.id;
+        }
+        if (appMessage.method === 'serverRequest/resolved' && typeof onCodexServerRequestResolved === 'function') {
+          onCodexServerRequestResolved(params, {
+            sessionId: currentSessionId || sessionId || draftSessionId || '',
+            turnId
+          });
         }
         if (params.threadId && currentSessionId && params.threadId !== currentSessionId) {
           return;

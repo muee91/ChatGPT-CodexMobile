@@ -629,6 +629,44 @@ test('session message reader falls back to rollout jsonl when desktop thread is 
   }
 });
 
+test('session message reader falls back to rollout jsonl after an oversized app-server response', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'codexmobile-message-reader-stdout-'));
+  try {
+    const rolloutPath = path.join(dir, 'rollout.jsonl');
+    await fs.writeFile(rolloutPath, [
+      JSON.stringify({
+        timestamp: '2026-05-08T17:01:40.000Z',
+        type: 'turn_context',
+        payload: { turn_id: 'turn-1', cwd: dir }
+      }),
+      JSON.stringify({
+        timestamp: '2026-05-08T17:01:41.000Z',
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: '已从本地会话记录恢复。' }]
+        }
+      })
+    ].join('\n'));
+
+    const stdoutError = new Error('Codex app-server stdout line exceeded 67108864 bytes without a newline');
+    stdoutError.method = 'app-server-stdout';
+    const reader = createSessionMessageReader({
+      readDeletedMessageIds: async () => new Set(),
+      readDesktopThread: async () => {
+        throw stdoutError;
+      },
+      resolveSessionThread: async (sessionId) => ({ id: sessionId, filePath: rolloutPath })
+    });
+
+    const result = await reader.readSessionMessages('session-1');
+    assert.deepEqual(result.messages.map((message) => message.content), ['已从本地会话记录恢复。']);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('messagesFromRolloutJsonl converts proposed plan answers into standalone plan UI messages', () => {
   const content = [
     JSON.stringify({

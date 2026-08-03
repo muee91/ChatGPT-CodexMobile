@@ -39,8 +39,11 @@ export function normalizePairingCode(value, codeLength = 0) {
   return length ? normalized.slice(0, length) : normalized;
 }
 
-export function pairingRequestFromSearch(search = '') {
-  return pairingRequestFromParams(new URLSearchParams(String(search || '').replace(/^\?/, '')));
+export function pairingRequestFromSearch(search = '', locationLike = globalThis.location) {
+  return pairingRequestFromParams(
+    new URLSearchParams(String(search || '').replace(/^\?/, '')),
+    { serverUrl: normalizeServerUrl(locationLike?.origin || '') }
+  );
 }
 
 function pairingRequestFromParams(params, { serverUrl = '' } = {}) {

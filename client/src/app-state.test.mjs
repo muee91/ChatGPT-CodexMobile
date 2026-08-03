@@ -298,13 +298,20 @@ test('titleFromFirstMessage uses the shared provisional title helper', () => {
   assert.equal(titleFromFirstMessage('帮我看一下移动端新对话逻辑'), '移动端新对话逻辑');
 });
 
-test('sessionRunBadgeState ignores session index runtime but honors live runtime', () => {
+test('sessionRunBadgeState honors official session runtime and live runtime', () => {
   const session = {
     id: 'thread-1',
     runtime: { status: 'running', turnId: 'turn-1', updatedAt: '2026-05-08T02:00:00.000Z' }
   };
 
-  assert.equal(sessionRunBadgeState(session), null);
+  const officialRuntime = reconcileThreadRuntimeWithSessions({}, {
+    projectA: [{
+      ...session,
+      runtimeAuthoritative: true,
+      runtimeObservedAt: '2026-05-08T02:00:01.000Z'
+    }]
+  });
+  assert.equal(sessionRunBadgeState(session, { threadRuntimeById: officialRuntime }), 'running');
   assert.equal(
     sessionRunBadgeState(session, {
       threadRuntimeById: {
@@ -324,11 +331,13 @@ test('sessionRunBadgeState reads active runs by session id', () => {
   );
 });
 
-test('session runtime reconciliation keeps index hints out of the live running badge', () => {
+test('session runtime reconciliation projects authoritative active states into running badges', () => {
   const runtimeById = reconcileThreadRuntimeWithSessions({}, {
     projectA: [
       {
         id: 'thread-1',
+        runtimeAuthoritative: true,
+        runtimeObservedAt: '2026-05-08T02:00:02.000Z',
         runtime: {
           status: 'running',
           source: 'desktop-thread',
@@ -338,6 +347,8 @@ test('session runtime reconciliation keeps index hints out of the live running b
       },
       {
         id: 'thread-2',
+        runtimeAuthoritative: true,
+        runtimeObservedAt: '2026-05-08T02:01:02.000Z',
         runtime: {
           status: 'running',
           source: 'desktop-thread',
@@ -348,9 +359,58 @@ test('session runtime reconciliation keeps index hints out of the live running b
     ]
   });
 
+  assert.equal(runtimeById['thread-1'].fromSessionIndex, true);
+  assert.equal(runtimeById['thread-2'].authoritative, true);
+  assert.equal(sessionRunBadgeState({ id: 'thread-1' }, { threadRuntimeById: runtimeById }), 'running');
+  assert.equal(sessionRunBadgeState({ id: 'thread-2' }, { threadRuntimeById: runtimeById }), 'running');
+});
+
+test('authoritative idle session clears an older live runtime after reconnect', () => {
+  const runtimeById = reconcileThreadRuntimeWithSessions({
+    'thread-1': {
+      status: 'running',
+      source: 'headless-local',
+      sessionId: 'thread-1',
+      turnId: 'turn-old',
+      updatedAt: '2026-05-08T02:00:00.000Z'
+    },
+    'turn-old': {
+      status: 'running',
+      source: 'headless-local',
+      sessionId: 'thread-1',
+      turnId: 'turn-old',
+      updatedAt: '2026-05-08T02:00:00.000Z'
+    }
+  }, {
+    projectA: [{
+      id: 'thread-1',
+      runtime: null,
+      runtimeAuthoritative: true,
+      runtimeObservedAt: '2026-05-08T02:05:00.000Z'
+    }]
+  });
+
   assert.deepEqual(runtimeById, {});
-  assert.equal(sessionRunBadgeState({ id: 'thread-1' }, { threadRuntimeById: runtimeById }), null);
-  assert.equal(sessionRunBadgeState({ id: 'thread-2' }, { threadRuntimeById: runtimeById }), null);
+});
+
+test('an older authoritative snapshot cannot clear a newer live event', () => {
+  const runtimeById = reconcileThreadRuntimeWithSessions({
+    'thread-1': {
+      status: 'running',
+      source: 'headless-local',
+      sessionId: 'thread-1',
+      updatedAt: '2026-05-08T02:05:01.000Z'
+    }
+  }, {
+    projectA: [{
+      id: 'thread-1',
+      runtime: null,
+      runtimeAuthoritative: true,
+      runtimeObservedAt: '2026-05-08T02:05:00.000Z'
+    }]
+  });
+
+  assert.equal(runtimeById['thread-1'].status, 'running');
 });
 
 test('session runtime reconciliation clears stale desktop runtime for loaded sessions', () => {

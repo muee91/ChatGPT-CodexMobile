@@ -174,10 +174,11 @@ function interactionFromMessage(message = {}, context = {}) {
   const method = clean(message.method);
   const params = message.params || {};
   const kind = interactionKind(method);
-  const id = `interaction-${requestIdFor(message)}`;
+  const appRequestId = requestIdFor(message);
+  const id = `interaction-${appRequestId}`;
   const base = {
     id,
-    appRequestId: requestIdFor(message),
+    appRequestId,
     method,
     kind,
     projectId: clean(context.projectId),
@@ -445,11 +446,40 @@ export function createInteractionBroker({ broadcast = () => null, timeoutMs = DE
     return ids.map((id) => cancelInteraction(id));
   }
 
+  function resolveFromAppServer({ requestId, sessionId = '', turnId = '' } = {}) {
+    const appRequestId = String(requestId ?? '').trim();
+    const expectedSessionId = clean(sessionId);
+    const expectedTurnId = clean(turnId);
+    const entry = [...pending.values()].find(({ interaction }) =>
+      interaction.appRequestId === appRequestId &&
+      (!expectedSessionId || interaction.sessionId === expectedSessionId) &&
+      (!expectedTurnId || interaction.turnId === expectedTurnId)
+    );
+    if (!entry) {
+      return { success: false, requestId: appRequestId };
+    }
+    pending.delete(entry.interaction.id);
+    clearTimeout(entry.timeout);
+    const result = conservativeResult(entry.interaction);
+    entry.resolve(result);
+    broadcast({
+      type: 'interaction-resolved',
+      interactionId: entry.interaction.id,
+      projectId: entry.interaction.projectId,
+      sessionId: entry.interaction.sessionId,
+      turnId: entry.interaction.turnId,
+      status: 'server-resolved',
+      timestamp: nowIso()
+    });
+    return { success: true, interactionId: entry.interaction.id, result, status: 'server-resolved' };
+  }
+
   return {
     requestFromAppServer,
     respondInteraction,
     cancelInteraction,
     cancelInteractionsForRun,
+    resolveFromAppServer,
     listPendingInteractions
   };
 }

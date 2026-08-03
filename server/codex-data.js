@@ -59,7 +59,9 @@ export { messagesFromDesktopThread } from './desktop-thread-projector.js';
 export { normalizeComparablePath } from './session-index-builder.js';
 
 const INCLUDE_MISSING_SUBAGENT_THREADS = process.env.CODEXMOBILE_INCLUDE_MISSING_SUBAGENT_THREADS === '1';
-const USE_APP_SERVER_THREAD_LIST = /^(1|true|yes|on)$/i.test(String(process.env.CODEXMOBILE_USE_APP_SERVER_THREAD_LIST || '').trim());
+const USE_APP_SERVER_THREAD_LIST = !/^(0|false|no|off)$/i.test(
+  String(process.env.CODEXMOBILE_USE_APP_SERVER_THREAD_LIST || '').trim()
+);
 const execFileAsync = promisify(execFile);
 const LOCAL_THREAD_SCAN_LIMIT = 1000;
 const LOCAL_THREAD_HEAD_BYTES = 512 * 1024;
@@ -476,7 +478,10 @@ async function listDesktopThreadsForCache() {
   });
   const result = await Promise.race([remote, fallback]);
   if (result.source === 'desktop') {
-    return result.threads;
+    return result.threads.map((thread) => ({
+      ...thread,
+      statusAuthoritative: true
+    }));
   }
   if (result.source === 'error') {
     console.warn('[sessions] Desktop thread/list failed, using local session files:', result.error.message);
@@ -711,6 +716,8 @@ export function listProjectSessions(projectId) {
     messageCount: session.messageCount,
     updatedAt: session.updatedAt,
     runtime: session.runtime || null,
+    runtimeAuthoritative: Boolean(session.runtimeAuthoritative),
+    runtimeObservedAt: session.runtimeObservedAt || null,
     context: session.context || null
   }));
 }

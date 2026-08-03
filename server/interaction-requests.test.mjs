@@ -116,6 +116,37 @@ test('requestUserInput accepts content object as answer payload for client compa
   assert.deepEqual(await pending, { answers: { check_method: { answers: ['自动检查 + 手动更新'] } } });
 });
 
+test('serverRequest/resolved clears a pending interaction without a mobile response', async () => {
+  const broadcasts = [];
+  const broker = createInteractionBroker({
+    broadcast: (payload) => broadcasts.push(payload),
+    timeoutMs: 1000
+  });
+  const pending = broker.requestFromAppServer(
+    {
+      id: 'app-request-cleared',
+      method: 'item/tool/requestUserInput',
+      params: {
+        questions: [{ id: 'choice', question: '请选择', options: ['继续', '取消'] }]
+      }
+    },
+    { projectId: 'project-1', sessionId: 'thread-1', turnId: 'turn-1' }
+  );
+
+  const result = broker.resolveFromAppServer({
+    requestId: 'app-request-cleared',
+    sessionId: 'thread-1',
+    turnId: 'turn-1'
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(await pending, { answers: {} });
+  assert.equal(broker.listPendingInteractions().length, 0);
+  assert.equal(broadcasts.at(-1).type, 'interaction-resolved');
+  assert.equal(broadcasts.at(-1).status, 'server-resolved');
+  assert.equal(broker.resolveFromAppServer({ requestId: 'app-request-cleared' }).success, false);
+});
+
 test('elicitation request accepts JSON schema questions and returns content answers', async () => {
   const broadcasts = [];
   const broker = createInteractionBroker({

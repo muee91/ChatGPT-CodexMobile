@@ -97,7 +97,7 @@ function safeSocketAuthority(req) {
   return `${host}:${port}`;
 }
 
-function directAuthorityIsBound(req, host) {
+function directAuthorityIsBound(req, host, options) {
   const secure = Boolean(req.socket?.encrypted);
   const parsed = authorityUrl(host, secure);
   if (!parsed) {
@@ -113,28 +113,29 @@ function directAuthorityIsBound(req, host) {
   }
 
   const origin = parsed.origin;
-  if ((authoritySecurityOptions.configuredAllowedOrigins || []).includes(origin)) {
+  if ((options.configuredAllowedOrigins || []).includes(origin)) {
     return true;
   }
 
   const tlsServerName = normalizedHostAddress(req.socket?.servername || '');
-  return secure && Boolean(tlsServerName) && tlsServerName === hostname;
+  return secure && requestedPort === localPort && Boolean(tlsServerName) && tlsServerName === hostname;
 }
 
-export function hardenPairingRequestAuthority(req) {
+export function hardenPairingRequestAuthority(req, options = authoritySecurityOptions) {
   if (!['/api/pair/request', '/api/pair/terminal-request'].includes(pairingRequestPath(req))) {
     return;
   }
+  req.headers ||= {};
   const directRemote = req.socket?.remoteAddress || '';
-  if (isTrustedProxy(directRemote, authoritySecurityOptions)) {
+  if (isTrustedProxy(directRemote, options)) {
     return;
   }
 
-  delete req.headers?.['x-forwarded-host'];
-  delete req.headers?.['x-forwarded-proto'];
-  delete req.headers?.['x-forwarded-port'];
+  delete req.headers['x-forwarded-host'];
+  delete req.headers['x-forwarded-proto'];
+  delete req.headers['x-forwarded-port'];
 
-  if (!directAuthorityIsBound(req, req.headers?.host)) {
+  if (!directAuthorityIsBound(req, req.headers.host, options)) {
     req.headers.host = safeSocketAuthority(req);
   }
 }

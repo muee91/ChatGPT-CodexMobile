@@ -48,16 +48,45 @@ function isPublicPairingRequestPayload(payload) {
   );
 }
 
+function isUnauthenticatedStatusPayload(payload) {
+  return Boolean(
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    payload.connected === true &&
+    payload.auth?.required === true &&
+    payload.auth?.authenticated === false
+  );
+}
+
+function publicUnauthenticatedStatus(payload) {
+  return {
+    connected: true,
+    pairing: {
+      commands: ['npm run pair']
+    },
+    auth: {
+      required: true,
+      authenticated: false,
+      canPair: payload.auth?.canPair !== false
+    }
+  };
+}
+
 export function sanitizeJsonPayload(payload) {
-  if (!isPublicPairingRequestPayload(payload)) {
-    return payload;
+  let sanitized = payload;
+  if (isPublicPairingRequestPayload(sanitized)) {
+    const {
+      pairingUrl: _pairingUrl,
+      qrUrl: _qrUrl,
+      ...publicPayload
+    } = sanitized;
+    sanitized = publicPayload;
   }
-  const {
-    pairingUrl: _pairingUrl,
-    qrUrl: _qrUrl,
-    ...publicPayload
-  } = payload;
-  return publicPayload;
+  if (isUnauthenticatedStatusPayload(sanitized)) {
+    return publicUnauthenticatedStatus(sanitized);
+  }
+  return sanitized;
 }
 
 function pairingRequestPath(req) {

@@ -1,8 +1,8 @@
 /**
  * 远程图片代理：限制协议、固定已校验 DNS 结果、逐跳验证重定向并限制响应体大小。
  *
- * 私有网络策略：允许 RFC1918、IPv6 ULA 与 Tailscale CGNAT；禁止回环、链路本地、
- * 多播、未指定地址和常见云元数据端点。
+ * 私有网络策略：允许 RFC1918、IPv6 ULA 与 Tailscale CGNAT；禁止云元数据、
+ * 链路本地、多播和未指定地址。回环目标仅允许当前 CodexMobile 服务或显式配置来源。
  */
 import dns from 'node:dns/promises';
 import http from 'node:http';
@@ -13,13 +13,13 @@ export const REMOTE_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 export const REMOTE_IMAGE_TIMEOUT_MS = 15_000;
 export const REMOTE_IMAGE_MAX_REDIRECTS = 5;
 
-const BLOCKED_HOSTNAMES = new Set([
-  'localhost',
+const HARD_BLOCKED_HOSTNAMES = new Set([
   'metadata.google.internal',
   'metadata.azure.internal',
   'instance-data',
   'instance-data.ec2.internal'
 ]);
+const LOOPBACK_HOSTNAMES = new Set(['localhost']);
 const BLOCKED_EXACT_IPV4 = new Set([
   '169.254.169.254',
   '169.254.170.2',
@@ -59,24 +59,69 @@ function normalizedAddress(value) {
     .split('%')[0];
 }
 
-export function isBlockedRemoteImageAddress(value) {
+function normalizedHostname(value) {
+  return normalizedAddress(value).replace(/\.$/, '');
+}
+
+function originFromValue(value) {
+  try {
+    return new URL(String(value || '').trim()).origin;
+  } catch {
+    return '';
+  }
+}
+
+function configuredOriginsFromEnv(env = process.env) {
+  const port = Number(env.PORT || 3321);
+  const httpsPort = Number(env.HTTPS_PORT || 3443);
+  const values = [
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+    `http://[::1]:${port}`,
+    `https://127.0.0.1:${httpsPort}`,
+    `https://localhost:${httpsPort}`,
+    `https://[::1]:${httpsPort}`,
+    env.CODEXMOBILE_IMAGE_BASE_URL,
+    ...String(env.CODEXMOBILE_REMOTE_IMAGE_ALLOWED_ORIGINS || '')
+      .split(',')
+      .map((item) => item.trim())
+  ];
+  return [...new Set(values.map(originFromValue).filter(Boolean))];
+}
+
+export function configuredRemoteImageLoopbackOrigins(env = process.env) {
+  return configuredOriginsFromEnv(env);
+}
+
+export function isLoopbackRemoteImageAddress(value) {
   const address = normalizedAddress(value);
   const mappedIpv4 = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
   if (mappedIpv4) {
-    return isBlockedRemoteImageAddress(mappedIpv4);
+    return isLoopbackRemoteImageAddress(mappedIpv4);
+  }
+  if (net.isIP(address) === 4) {
+    return ipv4InCidr(address, '127.0.0.0', 8);
+  }
+  return address === '::1';
+}
+
+export function isHardBlockedRemoteImageAddress(value) {
+  const address = normalizedAddress(value);
+  const mappedIpv4 = address.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+  if (mappedIpv4) {
+    return isHardBlockedRemoteImageAddress(mappedIpv4);
   }
 
   const family = net.isIP(address);
   if (family === 4) {
     return BLOCKED_EXACT_IPV4.has(address) ||
       ipv4InCidr(address, '0.0.0.0', 8) ||
-      ipv4InCidr(address, '127.0.0.0', 8) ||
       ipv4InCidr(address, '169.254.0.0', 16) ||
       ipv4InCidr(address, '224.0.0.0', 4) ||
       ipv4InCidr(address, '240.0.0.0', 4);
   }
   if (family === 6) {
-    if (address === '::' || address === '::1' || address.startsWith('::')) {
+    if (address === '::' || (address.startsWith('::') && address !== '::1')) {
       return true;
     }
     const firstHextet = Number.parseInt(address.split(':')[0] || '0', 16);
@@ -85,12 +130,22 @@ export function isBlockedRemoteImageAddress(value) {
   return true;
 }
 
-export function isBlockedRemoteImageHostname(value) {
-  const hostname = normalizedAddress(value).replace(/\.$/, '');
+export function isBlockedRemoteImageAddress(value) {
+  return isLoopbackRemoteImageAddress(value) || isHardBlockedRemoteImageAddress(value);
+}
+
+function isHardBlockedRemoteImageHostname(value) {
+  const hostname = normalizedHostname(value);
   return !hostname ||
-    BLOCKED_HOSTNAMES.has(hostname) ||
-    hostname.endsWith('.localhost') ||
+    HARD_BLOCKED_HOSTNAMES.has(hostname) ||
     hostname.endsWith('.metadata.google.internal');
+}
+
+export function isBlockedRemoteImageHostname(value) {
+  const hostname = normalizedHostname(value);
+  return isHardBlockedRemoteImageHostname(hostname) ||
+    LOOPBACK_HOSTNAMES.has(hostname) ||
+    hostname.endsWith('.localhost');
 }
 
 function normalizeLookupRows(result) {
@@ -104,8 +159,13 @@ function normalizeLookupRows(result) {
     .filter((entry) => entry.address && [4, 6].includes(entry.family));
 }
 
+function normalizedAllowedOrigins(values = configuredRemoteImageLoopbackOrigins()) {
+  return new Set((Array.isArray(values) ? values : [values]).map(originFromValue).filter(Boolean));
+}
+
 export async function validateRemoteImageTarget(input, {
-  lookup = dns.lookup
+  lookup = dns.lookup,
+  allowedLoopbackOrigins = configuredRemoteImageLoopbackOrigins()
 } = {}) {
   let url;
   try {
@@ -119,7 +179,13 @@ export async function validateRemoteImageTarget(input, {
   if (url.username || url.password) {
     throw policyError('Image URL credentials are not allowed', 400);
   }
-  if (isBlockedRemoteImageHostname(url.hostname)) {
+
+  const hostname = normalizedHostname(url.hostname);
+  const loopbackAllowed = normalizedAllowedOrigins(allowedLoopbackOrigins).has(url.origin);
+  if (isHardBlockedRemoteImageHostname(hostname)) {
+    throw policyError('Remote image target is not allowed');
+  }
+  if ((LOOPBACK_HOSTNAMES.has(hostname) || hostname.endsWith('.localhost')) && !loopbackAllowed) {
     throw policyError('Remote image target is not allowed');
   }
 
@@ -127,7 +193,10 @@ export async function validateRemoteImageTarget(input, {
   const addresses = literalFamily
     ? [{ address: normalizedAddress(url.hostname), family: literalFamily }]
     : normalizeLookupRows(await lookup(url.hostname, { all: true, verbatim: true }));
-  if (!addresses.length || addresses.some((entry) => isBlockedRemoteImageAddress(entry.address))) {
+  if (!addresses.length || addresses.some((entry) => isHardBlockedRemoteImageAddress(entry.address))) {
+    throw policyError('Remote image target is not allowed');
+  }
+  if (addresses.some((entry) => isLoopbackRemoteImageAddress(entry.address)) && !loopbackAllowed) {
     throw policyError('Remote image target is not allowed');
   }
   return { url, addresses };
@@ -153,6 +222,8 @@ export function requestRemoteImageOnce(url, {
     const request = transport.request(url, {
       method: 'GET',
       lookup: pinnedLookup,
+      autoSelectFamily: addresses.length > 1,
+      autoSelectFamilyAttemptTimeout: 250,
       headers: {
         accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
         'user-agent': 'CodexMobile/2.0 image proxy'
@@ -213,11 +284,12 @@ export async function fetchRemoteImageBuffer(input, {
   requestOnce = requestRemoteImageOnce,
   maxBytes = REMOTE_IMAGE_MAX_BYTES,
   timeoutMs = REMOTE_IMAGE_TIMEOUT_MS,
-  maxRedirects = REMOTE_IMAGE_MAX_REDIRECTS
+  maxRedirects = REMOTE_IMAGE_MAX_REDIRECTS,
+  allowedLoopbackOrigins = configuredRemoteImageLoopbackOrigins()
 } = {}) {
   let currentUrl = input;
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
-    const target = await validateRemoteImageTarget(currentUrl, { lookup });
+    const target = await validateRemoteImageTarget(currentUrl, { lookup, allowedLoopbackOrigins });
     const response = await requestOnce(target.url, {
       addresses: target.addresses,
       maxBytes,

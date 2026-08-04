@@ -5,7 +5,7 @@
  *
  * Exports:
  * - DEFAULT_COMPRESSIBLE_EXTENSIONS — 可压缩静态扩展名集合。
- * - sendJson / sendHtml / htmlEscape — 响应与转义。
+ * - sanitizeJsonPayload / sendJson / sendHtml / htmlEscape — 响应、敏感字段收敛与转义。
  * - acceptsGzip / staticCacheControl / sendStaticContent — 静态与缓存。
  * - readBody / readBuffer — 读取请求体。
  *
@@ -27,12 +27,37 @@ export const DEFAULT_COMPRESSIBLE_EXTENSIONS = new Set([
   '.svg'
 ]);
 
+function isPublicPairingRequestPayload(payload) {
+  return Boolean(
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    payload.requestId &&
+    payload.codeLength &&
+    payload.expiresAt &&
+    !Object.prototype.hasOwnProperty.call(payload, 'code') &&
+    (payload.pairingUrl || payload.qrUrl)
+  );
+}
+
+export function sanitizeJsonPayload(payload) {
+  if (!isPublicPairingRequestPayload(payload)) {
+    return payload;
+  }
+  const {
+    pairingUrl: _pairingUrl,
+    qrUrl: _qrUrl,
+    ...publicPayload
+  } = payload;
+  return publicPayload;
+}
+
 export function sendJson(res, status, payload) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store'
   });
-  res.end(JSON.stringify(payload));
+  res.end(JSON.stringify(sanitizeJsonPayload(payload)));
 }
 
 export function sendHtml(res, status, html) {

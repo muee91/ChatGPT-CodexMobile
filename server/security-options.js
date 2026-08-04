@@ -114,6 +114,8 @@ export function readSecurityOptions(env = process.env) {
     publicAccess,
     publicUrl,
     publicOrigin,
+    // Keep the boot-time allowlist separate because server/index also appends the
+    // current request origin for same-host LAN/PWA traffic at runtime.
     configuredAllowedOrigins,
     allowedOrigins: configuredAllowedOrigins,
     trustedProxyCidrs: String(env.CODEXMOBILE_TRUSTED_PROXIES || '').split(',').map((item) => item.trim()).filter(Boolean),
@@ -156,6 +158,9 @@ export function sameOriginAllowed(origin, options = {}) {
     if (url.hostname === 'localhost' && ['http:', 'https:', 'capacitor:'].includes(url.protocol)) {
       return true;
     }
+    // A private-looking hostname alone is insufficient. It must also match the
+    // runtime origin derived for this request, preventing another LAN/Tailscale
+    // site from inheriting CORS or WebSocket trust.
     return ['http:', 'https:'].includes(url.protocol) &&
       localNetworkHostnameAllowed(url.hostname, options) &&
       (options.allowedOrigins || []).includes(value);

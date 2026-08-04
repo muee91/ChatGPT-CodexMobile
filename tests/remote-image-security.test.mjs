@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  configuredRemoteImageLoopbackOrigins,
   fetchRemoteImageBuffer,
   isBlockedRemoteImageAddress,
   validateRemoteImageTarget
 } from '../server/remote-image-proxy.js';
 
-test('blocks loopback, link-local, metadata, multicast, and unspecified targets', () => {
+test('blocks loopback, link-local, metadata, multicast, and unspecified targets by default', () => {
   for (const address of [
     '127.0.0.1',
     '169.254.169.254',
@@ -30,7 +31,44 @@ test('allows LAN, IPv6 ULA, public, and Tailscale addresses', () => {
   }
 });
 
-test('rejects hostnames resolving to loopback', async () => {
+test('allows the current CodexMobile loopback origin without opening other ports', async () => {
+  const allowed = configuredRemoteImageLoopbackOrigins({ PORT: '3321', HTTPS_PORT: '3443' });
+  const target = await validateRemoteImageTarget('http://127.0.0.1:3321/generated/example.png', {
+    allowedLoopbackOrigins: allowed
+  });
+  assert.equal(target.url.origin, 'http://127.0.0.1:3321');
+
+  await assert.rejects(
+    validateRemoteImageTarget('http://127.0.0.1:9999/example.png', {
+      allowedLoopbackOrigins: allowed
+    }),
+    /not allowed/
+  );
+});
+
+test('allows an explicitly configured local image service origin', async () => {
+  const allowed = configuredRemoteImageLoopbackOrigins({
+    PORT: '3321',
+    HTTPS_PORT: '3443',
+    CODEXMOBILE_IMAGE_BASE_URL: 'http://localhost:8317/v1'
+  });
+  const target = await validateRemoteImageTarget('http://localhost:8317/images/result.png', {
+    lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+    allowedLoopbackOrigins: allowed
+  });
+  assert.equal(target.url.origin, 'http://localhost:8317');
+});
+
+test('metadata remains blocked even when its origin is listed', async () => {
+  await assert.rejects(
+    validateRemoteImageTarget('http://169.254.169.254/latest/meta-data', {
+      allowedLoopbackOrigins: ['http://169.254.169.254']
+    }),
+    /not allowed/
+  );
+});
+
+test('rejects hostnames resolving to loopback unless explicitly configured', async () => {
   await assert.rejects(
     validateRemoteImageTarget('http://camera.lan/frame.jpg', {
       lookup: async () => [{ address: '127.0.0.1', family: 4 }]

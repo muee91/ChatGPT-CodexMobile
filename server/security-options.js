@@ -7,7 +7,6 @@
  * - envFlag / readIntEnv — 环境变量解析辅助。
  * - normalizeRemoteAddress / cidrMatches / addressInCidrs / isPrivateRemoteAddress — 地址判断工具。
  * - parseOrigins / readSecurityOptions / sameOriginAllowed — Origin 与权限安全配置读取。
- * - requestLocalOrigin / requestOriginAllowed / requestCanonicalOrigin — 基于实际监听地址构造与校验请求来源。
  * - isTrustedProxy / clientRemoteAddress / isRequestTransportSecure / requestMayUsePublicHttp — 请求来源判断。
  *
  * Inward（本模块依赖/组装的关键符号）: Node net、process.env。
@@ -99,6 +98,11 @@ export function parseOrigins(value) {
 export function readSecurityOptions(env = process.env) {
   const publicUrl = String(env.CODEXMOBILE_PUBLIC_URL || '').trim();
   const publicOrigin = publicUrl ? new URL(publicUrl).origin : '';
+  const configuredAllowedOrigins = [...new Set([
+    publicOrigin,
+    ...NATIVE_CLIENT_ORIGINS,
+    ...parseOrigins(env.CODEXMOBILE_ALLOWED_ORIGINS)
+  ].filter(Boolean))];
   const legacyBearerEnabled = envFlag(env, 'CODEXMOBILE_ALLOW_LEGACY_BEARER') ||
     String(env.CODEXMOBILE_ALLOW_LEGACY_BEARER || '').trim() === '';
   const publicAccess = envFlag(env, 'CODEXMOBILE_PUBLIC_ACCESS');
@@ -110,9 +114,8 @@ export function readSecurityOptions(env = process.env) {
     publicAccess,
     publicUrl,
     publicOrigin,
-    httpPort: readIntEnv(env, 'PORT', 3321),
-    httpsPort: readIntEnv(env, 'HTTPS_PORT', 3443),
-    allowedOrigins: [...new Set([publicOrigin, ...NATIVE_CLIENT_ORIGINS, ...parseOrigins(env.CODEXMOBILE_ALLOWED_ORIGINS)].filter(Boolean))],
+    configuredAllowedOrigins,
+    allowedOrigins: configuredAllowedOrigins,
     trustedProxyCidrs: String(env.CODEXMOBILE_TRUSTED_PROXIES || '').split(',').map((item) => item.trim()).filter(Boolean),
     privateCidrs: String(env.CODEXMOBILE_PRIVATE_CIDRS || '').split(',').map((item) => item.trim()).filter(Boolean),
     allowRemotePairing: envFlag(env, 'CODEXMOBILE_ALLOW_REMOTE_PAIRING'),
@@ -128,132 +131,31 @@ export function readSecurityOptions(env = process.env) {
   };
 }
 
-function normalizedOrigin(value) {
-  try {
-    return new URL(String(value || '').trim()).origin;
-  } catch {
-    return '';
-  }
-}
-
-function firstHeaderValue(value) {
-  return String(value || '').split(',')[0].trim();
-}
-
-function bracketAddress(address) {
-  const normalized = normalizeRemoteAddress(address);
-  return net.isIP(normalized) === 6 ? `[${normalized}]` : normalized;
-}
-
-function requestProtocol(req, options) {
-  return isRequestTransportSecure(req, options) ? 'https' : 'http';
-}
-
-function requestAuthority(req, options) {
-  const directAddress = normalizeRemoteAddress(req.socket?.remoteAddress || '');
-  if (isTrustedProxy(directAddress, options)) {
-    const forwardedHost = firstHeaderValue(req.headers?.['x-forwarded-host']);
-    if (forwardedHost) {
-      return forwardedHost;
-    }
-  }
-  return firstHeaderValue(req.headers?.host);
-}
-
-function localHostnameAllowed(hostname) {
+function localNetworkHostnameAllowed(hostname, options = {}) {
   const value = String(hostname || '').trim().toLowerCase();
   return Boolean(value) && (
-    value === 'localhost' ||
+    isPrivateRemoteAddress(value, options) ||
     !value.includes('.') ||
     value.endsWith('.local') ||
     value.endsWith('.ts.net')
   );
 }
 
-export function requestLocalOrigin(req, options = {}) {
-  const protocol = requestProtocol(req, options);
-  const address = normalizeRemoteAddress(req.socket?.localAddress || '') || '127.0.0.1';
-  const fallbackPort = protocol === 'https' ? options.httpsPort || 3443 : options.httpPort || 3321;
-  const port = Number(req.socket?.localPort || fallbackPort);
-  return `${protocol}://${bracketAddress(address)}:${port}`;
-}
-
-export function requestOriginAllowed(origin, req, options = {}) {
-  const value = normalizedOrigin(origin);
-  if (!String(origin || '').trim()) {
-    return true;
-  }
-  if (!value) {
-    return false;
-  }
-  if ((options.allowedOrigins || []).includes(value)) {
-    return true;
-  }
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    return false;
-  }
-  if (!['http:', 'https:'].includes(url.protocol)) {
-    return false;
-  }
-  if (url.hostname === 'localhost') {
-    return true;
-  }
-  if (value === requestLocalOrigin(req, options)) {
-    return true;
-  }
-
-  const authority = requestAuthority(req, options);
-  if (!authority) {
-    return false;
-  }
-  const authorityOrigin = normalizedOrigin(`${requestProtocol(req, options)}://${authority}`);
-  if (authorityOrigin !== value) {
-    return false;
-  }
-  const directAddress = normalizeRemoteAddress(req.socket?.remoteAddress || '');
-  return localHostnameAllowed(url.hostname) || (
-    isTrustedProxy(directAddress, options) && isPrivateRemoteAddress(url.hostname, options)
-  );
-}
-
-export function requestCanonicalOrigin(req, options = {}) {
-  const requestHeaderOrigin = normalizedOrigin(req.headers?.origin);
-  if (
-    requestHeaderOrigin &&
-    requestHeaderOrigin.startsWith('http') &&
-    requestOriginAllowed(requestHeaderOrigin, req, options)
-  ) {
-    return requestHeaderOrigin;
-  }
-  if (options.publicOrigin) {
-    return options.publicOrigin;
-  }
-
-  const directAddress = normalizeRemoteAddress(req.socket?.remoteAddress || '');
-  if (isTrustedProxy(directAddress, options)) {
-    const forwardedHost = firstHeaderValue(req.headers?.['x-forwarded-host']);
-    const forwardedProto = firstHeaderValue(req.headers?.['x-forwarded-proto']).toLowerCase();
-    if (forwardedHost && ['http', 'https'].includes(forwardedProto)) {
-      const forwardedOrigin = normalizedOrigin(`${forwardedProto}://${forwardedHost}`);
-      if (requestOriginAllowed(forwardedOrigin, req, options)) {
-        return forwardedOrigin;
-      }
-    }
-  }
-  return requestLocalOrigin(req, options);
-}
-
-export function sameOriginAllowed(origin, options) {
+export function sameOriginAllowed(origin, options = {}) {
   const value = String(origin || '').trim();
-  if (!value || (options.allowedOrigins || []).includes(value)) {
+  if (!value) {
+    return true;
+  }
+  const configuredOrigins = options.configuredAllowedOrigins || options.allowedOrigins || [];
+  if (configuredOrigins.includes(value)) {
     return true;
   }
   try {
     const url = new URL(value);
-    return url.hostname === 'localhost' && ['http:', 'https:', 'capacitor:'].includes(url.protocol);
+    if (url.hostname === 'localhost' && ['http:', 'https:', 'capacitor:'].includes(url.protocol)) {
+      return true;
+    }
+    return ['http:', 'https:'].includes(url.protocol) && localNetworkHostnameAllowed(url.hostname, options);
   } catch {
     return false;
   }

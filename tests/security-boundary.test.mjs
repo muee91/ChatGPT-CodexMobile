@@ -81,12 +81,16 @@ test('runtime Host-derived origins cannot add an arbitrary public origin', () =>
   assert.equal(sameOriginAllowed('https://evil.example', requestOptions), false);
 });
 
-test('localhost and matching LAN, local DNS, IPv6, and Tailscale origins remain allowed', () => {
+test('localhost and matching LAN, private DNS, IPv6, and Tailscale origins remain allowed', () => {
   const options = readSecurityOptions({});
   const privateOrigins = [
     'http://192.168.1.10:3321',
     'http://codex-workstation:3321',
     'http://codex-workstation.local:3321',
+    'http://codex.home.arpa:3321',
+    'http://codex.lan:3321',
+    'http://codex.internal:3321',
+    'http://codex.localdomain:3321',
     'http://[fd00::10]:3321',
     'https://codex.example-tailnet.ts.net:3443'
   ];
@@ -102,16 +106,18 @@ test('a different LAN or Tailscale origin is not accepted just because its hostn
 
   assert.equal(sameOriginAllowed('https://other-tailnet.ts.net:3443', options), false);
   assert.equal(sameOriginAllowed('http://192.168.1.99:3321', options), false);
+  assert.equal(sameOriginAllowed('http://other.home.arpa:3321', options), false);
 });
 
-test('configured public origins work while unconfigured public origins remain blocked', () => {
+test('configured public and corporate origins work while unconfigured origins remain blocked', () => {
   const options = readSecurityOptions({
     CODEXMOBILE_PUBLIC_URL: 'https://codex.example',
-    CODEXMOBILE_ALLOWED_ORIGINS: 'https://companion.example'
+    CODEXMOBILE_ALLOWED_ORIGINS: 'https://companion.example,https://codex.internal.example'
   });
 
   assert.equal(sameOriginAllowed('https://codex.example', options), true);
   assert.equal(sameOriginAllowed('https://companion.example', options), true);
+  assert.equal(sameOriginAllowed('https://codex.internal.example', options), true);
   assert.equal(sameOriginAllowed('https://evil.example', options), false);
 });
 

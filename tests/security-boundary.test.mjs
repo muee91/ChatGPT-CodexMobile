@@ -6,6 +6,13 @@ import { sanitizeJsonPayload } from '../server/http-utils.js';
 import { extractRequestToken, rejectUnsafeOrigin } from '../server/request-security.js';
 import { readSecurityOptions, sameOriginAllowed } from '../server/security-options.js';
 
+function withRuntimeOrigin(options, origin) {
+  return {
+    ...options,
+    allowedOrigins: [...new Set([...(options.allowedOrigins || []), origin])]
+  };
+}
+
 test('local-file reads never opt into the pre-auth route path', () => {
   assert.equal(isReadonlyLocalFileRoute('GET', '/api/local-file'), false);
   assert.equal(isReadonlyLocalFileRoute('GET', '/api/local-file/example.txt'), false);
@@ -69,22 +76,32 @@ test('query token support requires an explicit compatibility opt-in', () => {
 
 test('runtime Host-derived origins cannot add an arbitrary public origin', () => {
   const base = readSecurityOptions({});
-  const requestOptions = {
-    ...base,
-    allowedOrigins: [...base.allowedOrigins, 'https://evil.example']
-  };
+  const requestOptions = withRuntimeOrigin(base, 'https://evil.example');
 
   assert.equal(sameOriginAllowed('https://evil.example', requestOptions), false);
 });
 
-test('localhost, literal LAN, local DNS, and Tailscale origins remain allowed', () => {
+test('localhost and matching LAN, local DNS, IPv6, and Tailscale origins remain allowed', () => {
   const options = readSecurityOptions({});
+  const privateOrigins = [
+    'http://192.168.1.10:3321',
+    'http://codex-workstation:3321',
+    'http://codex-workstation.local:3321',
+    'http://[fd00::10]:3321',
+    'https://codex.example-tailnet.ts.net:3443'
+  ];
 
   assert.equal(sameOriginAllowed('http://localhost:5173', options), true);
-  assert.equal(sameOriginAllowed('http://192.168.1.10:3321', options), true);
-  assert.equal(sameOriginAllowed('http://codex-workstation:3321', options), true);
-  assert.equal(sameOriginAllowed('http://codex-workstation.local:3321', options), true);
-  assert.equal(sameOriginAllowed('https://codex.example-tailnet.ts.net:3443', options), true);
+  for (const origin of privateOrigins) {
+    assert.equal(sameOriginAllowed(origin, withRuntimeOrigin(options, origin)), true, origin);
+  }
+});
+
+test('a different LAN or Tailscale origin is not accepted just because its hostname looks private', () => {
+  const options = withRuntimeOrigin(readSecurityOptions({}), 'https://codex.example-tailnet.ts.net:3443');
+
+  assert.equal(sameOriginAllowed('https://other-tailnet.ts.net:3443', options), false);
+  assert.equal(sameOriginAllowed('http://192.168.1.99:3321', options), false);
 });
 
 test('configured public origins work while unconfigured public origins remain blocked', () => {
@@ -98,11 +115,12 @@ test('configured public origins work while unconfigured public origins remain bl
   assert.equal(sameOriginAllowed('https://evil.example', options), false);
 });
 
-test('unsafe requests use the configured and private-network origin policy', () => {
+test('unsafe requests use the configured and matching private-network origin policy', () => {
   const base = readSecurityOptions({});
+  const lanOrigin = 'http://192.168.1.10:3321';
   const requestOptions = {
-    ...base,
-    allowedOrigins: [...base.allowedOrigins, 'https://evil.example']
+    ...withRuntimeOrigin(base, lanOrigin),
+    allowedOrigins: [...withRuntimeOrigin(base, lanOrigin).allowedOrigins, 'https://evil.example']
   };
 
   assert.deepEqual(
@@ -110,7 +128,7 @@ test('unsafe requests use the configured and private-network origin policy', () 
     { statusCode: 403, error: 'Cross-origin request rejected' }
   );
   assert.equal(
-    rejectUnsafeOrigin({ method: 'POST', headers: { origin: 'http://192.168.1.10:3321' } }, requestOptions),
+    rejectUnsafeOrigin({ method: 'POST', headers: { origin: lanOrigin } }, requestOptions),
     null
   );
 });

@@ -7,7 +7,7 @@
  * - createFileRouteHandler — 返回文件 API 处理函数。
  * - isReadonlyLocalFileRoute — 保留给 server/index 的认证前路由判断；本地文件读取必须在认证后处理。
  *
- * Inward（本模块依赖/组装的关键符号）: http-utils、file-browser、file-search、upload-service。
+ * Inward（本模块依赖/组装的关键符号）: http-utils、file-browser、file-search、upload-service、remote-image-proxy。
  *
  * Outward（谁在用/调用场景）: server/index。
  *
@@ -19,6 +19,7 @@ import {
   localFileRoots as defaultLocalFileRoots
 } from './file-browser.js';
 import { searchProjectFiles as defaultSearchProjectFiles } from './file-search.js';
+import { proxyRemoteImage as defaultProxyRemoteImage } from './remote-image-proxy.js';
 import { saveUpload as defaultSaveUpload } from './upload-service.js';
 
 function isLocalFileReadRoute(method = 'GET', pathname = '') {
@@ -40,6 +41,7 @@ export function createFileRouteHandler({
   localFileRoots = defaultLocalFileRoots,
   listLocalDirectory = defaultListLocalDirectory,
   searchProjectFiles = defaultSearchProjectFiles,
+  proxyRemoteImage = defaultProxyRemoteImage,
   staticService,
   saveUpload = defaultSaveUpload,
   uploadRoot,
@@ -61,7 +63,7 @@ export function createFileRouteHandler({
     }
 
     if (method === 'GET' && pathname === '/api/remote-image') {
-      await staticService.sendRemoteImage(req, res, url);
+      await proxyRemoteImage(req, res, url);
       return true;
     }
 

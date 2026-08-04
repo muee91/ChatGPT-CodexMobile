@@ -18,6 +18,14 @@
 import net from 'node:net';
 
 const NATIVE_CLIENT_ORIGINS = ['capacitor://localhost', 'http://localhost', 'https://localhost'];
+const LOCAL_NETWORK_DNS_SUFFIXES = [
+  '.local',
+  '.home.arpa',
+  '.lan',
+  '.internal',
+  '.localdomain',
+  '.ts.net'
+];
 
 export function envFlag(env, key) {
   return ['1', 'true', 'yes', 'on'].includes(String(env[key] || '').trim().toLowerCase());
@@ -139,8 +147,7 @@ function localNetworkHostnameAllowed(hostname, options = {}) {
   return Boolean(value) && (
     isPrivateRemoteAddress(value, options) ||
     !value.includes('.') ||
-    value.endsWith('.local') ||
-    value.endsWith('.ts.net')
+    LOCAL_NETWORK_DNS_SUFFIXES.some((suffix) => value.endsWith(suffix))
   );
 }
 
@@ -158,9 +165,9 @@ export function sameOriginAllowed(origin, options = {}) {
     if (url.hostname === 'localhost' && ['http:', 'https:', 'capacitor:'].includes(url.protocol)) {
       return true;
     }
-    // A private-looking hostname alone is insufficient. It must also match the
-    // runtime origin derived for this request, preventing another LAN/Tailscale
-    // site from inheriting CORS or WebSocket trust.
+    // The origin must exactly match the runtime origin derived for the request.
+    // Common private DNS suffixes are accepted without treating arbitrary public
+    // Host values as trusted.
     return ['http:', 'https:'].includes(url.protocol) &&
       localNetworkHostnameAllowed(url.hostname, options) &&
       (options.allowedOrigins || []).includes(value);

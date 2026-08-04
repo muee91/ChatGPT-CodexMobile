@@ -19,6 +19,7 @@
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import {
+  clientRemoteAddress,
   isTrustedProxy,
   normalizeRemoteAddress,
   readSecurityOptions
@@ -59,37 +60,7 @@ function isUnauthenticatedStatusPayload(payload) {
   );
 }
 
-function publicUnauthenticatedStatus(payload) {
-  return {
-    connected: true,
-    pairing: {
-      commands: ['npm run pair']
-    },
-    auth: {
-      required: true,
-      authenticated: false,
-      canPair: payload.auth?.canPair !== false
-    }
-  };
-}
-
-export function sanitizeJsonPayload(payload) {
-  let sanitized = payload;
-  if (isPublicPairingRequestPayload(sanitized)) {
-    const {
-      pairingUrl: _pairingUrl,
-      qrUrl: _qrUrl,
-      ...publicPayload
-    } = sanitized;
-    sanitized = publicPayload;
-  }
-  if (isUnauthenticatedStatusPayload(sanitized)) {
-    return publicUnauthenticatedStatus(sanitized);
-  }
-  return sanitized;
-}
-
-function pairingRequestPath(req) {
+function requestPath(req) {
   return String(req?.url || '').split('?')[0];
 }
 
@@ -101,6 +72,75 @@ function normalizedHostAddress(value) {
 
 function loopbackAddress(value) {
   return ['localhost', '127.0.0.1', '::1'].includes(normalizedHostAddress(value));
+}
+
+function requestHasForwardedAuthority(req) {
+  return Boolean(
+    req?.headers?.['x-forwarded-for'] ||
+    req?.headers?.['x-forwarded-host'] ||
+    req?.headers?.['x-forwarded-proto'] ||
+    req?.headers?.forwarded
+  );
+}
+
+function directLoopbackDiagnosticRequest(req, options) {
+  if (!req) {
+    return false;
+  }
+  const directRemote = normalizeRemoteAddress(req.socket?.remoteAddress || '');
+  if (!loopbackAddress(directRemote)) {
+    return false;
+  }
+  if (isTrustedProxy(directRemote, options)) {
+    return loopbackAddress(clientRemoteAddress(req, options));
+  }
+  // A local reverse proxy can make a remote request appear to originate from
+  // loopback. Only direct, non-forwarded requests receive the full diagnostic
+  // status used by the desktop shell and CLI smoke/status commands.
+  return !requestHasForwardedAuthority(req);
+}
+
+function publicUnauthenticatedStatus(payload) {
+  return {
+    connected: true,
+    hostName: payload.hostName || '',
+    port: Number(payload.port || 0) || null,
+    pairing: {
+      commands: ['cd <CodexMobile 项目目录>', 'npm run pair']
+    },
+    auth: {
+      required: true,
+      authenticated: false,
+      canPair: payload.auth?.canPair !== false
+    }
+  };
+}
+
+export function sanitizeJsonPayload(payload, {
+  request = null,
+  securityOptions = authoritySecurityOptions
+} = {}) {
+  let sanitized = payload;
+  if (isPublicPairingRequestPayload(sanitized)) {
+    const {
+      pairingUrl: _pairingUrl,
+      qrUrl: _qrUrl,
+      ...publicPayload
+    } = sanitized;
+    sanitized = publicPayload;
+  }
+  if (
+    requestPath(request) === '/api/status' &&
+    isUnauthenticatedStatusPayload(sanitized) &&
+    !directLoopbackDiagnosticRequest(request, securityOptions)
+  ) {
+    return publicUnauthenticatedStatus(sanitized);
+  }
+  return sanitized;
+}
+
+function pairingRequestPath(req) {
+  return requestPath(req);
 }
 
 function addressesEquivalent(left, right) {
@@ -174,7 +214,7 @@ export function sendJson(res, status, payload) {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store'
   });
-  res.end(JSON.stringify(sanitizeJsonPayload(payload)));
+  res.end(JSON.stringify(sanitizeJsonPayload(payload, { request: res.req || null })));
 }
 
 export function sendHtml(res, status, html) {

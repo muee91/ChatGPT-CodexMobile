@@ -2,26 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createFileRouteHandler, isReadonlyLocalFileRoute } from '../server/file-routes.js';
-import { pairingRequestUrlsForRequest, publicPairingRequestResponse } from '../server/pairing-response.js';
-import { extractRequestToken } from '../server/request-security.js';
-import {
-  readSecurityOptions,
-  requestCanonicalOrigin,
-  requestOriginAllowed
-} from '../server/security-options.js';
-
-function requestFixture({ headers = {}, socket = {} } = {}) {
-  return {
-    headers,
-    socket: {
-      remoteAddress: '192.168.1.44',
-      localAddress: '192.168.1.10',
-      localPort: 3321,
-      encrypted: false,
-      ...socket
-    }
-  };
-}
+import { sanitizeJsonPayload } from '../server/http-utils.js';
+import { extractRequestToken, rejectUnsafeOrigin } from '../server/request-security.js';
+import { readSecurityOptions, sameOriginAllowed } from '../server/security-options.js';
 
 test('local-file reads never opt into the pre-auth route path', () => {
   assert.equal(isReadonlyLocalFileRoute('GET', '/api/local-file'), false);
@@ -84,94 +67,78 @@ test('query token support requires an explicit compatibility opt-in', () => {
   assert.deepEqual(result, { token: 'temporary-compat-token', source: 'query' });
 });
 
-test('canonical origin ignores arbitrary Host and untrusted forwarded headers', () => {
-  const options = readSecurityOptions({ PORT: '3321', HTTPS_PORT: '3443' });
-  const request = requestFixture({
-    headers: {
-      host: 'evil.example',
-      'x-forwarded-host': 'evil.example',
-      'x-forwarded-proto': 'https'
-    }
-  });
+test('runtime Host-derived origins cannot add an arbitrary public origin', () => {
+  const base = readSecurityOptions({});
+  const requestOptions = {
+    ...base,
+    allowedOrigins: [...base.allowedOrigins, 'https://evil.example']
+  };
 
-  assert.equal(requestCanonicalOrigin(request, options), 'http://192.168.1.10:3321');
-  assert.equal(requestOriginAllowed('https://evil.example', request, options), false);
+  assert.equal(sameOriginAllowed('https://evil.example', requestOptions), false);
 });
 
-test('literal LAN and Tailscale host origins keep working', () => {
-  const options = readSecurityOptions({ PORT: '3321', HTTPS_PORT: '3443' });
-  const lanRequest = requestFixture({
-    headers: {
-      host: '192.168.1.10:3321',
-      origin: 'http://192.168.1.10:3321'
-    }
-  });
-  assert.equal(requestOriginAllowed(lanRequest.headers.origin, lanRequest, options), true);
-  assert.equal(requestCanonicalOrigin(lanRequest, options), lanRequest.headers.origin);
+test('localhost, literal LAN, local DNS, and Tailscale origins remain allowed', () => {
+  const options = readSecurityOptions({});
 
-  const tailscaleRequest = requestFixture({
-    headers: {
-      host: 'workstation.example-tailnet.ts.net:3321',
-      origin: 'http://workstation.example-tailnet.ts.net:3321'
-    },
-    socket: {
-      remoteAddress: '100.64.0.44',
-      localAddress: '100.64.0.10'
-    }
-  });
-  assert.equal(requestOriginAllowed(tailscaleRequest.headers.origin, tailscaleRequest, options), true);
-  assert.equal(requestCanonicalOrigin(tailscaleRequest, options), tailscaleRequest.headers.origin);
+  assert.equal(sameOriginAllowed('http://localhost:5173', options), true);
+  assert.equal(sameOriginAllowed('http://192.168.1.10:3321', options), true);
+  assert.equal(sameOriginAllowed('http://codex-workstation:3321', options), true);
+  assert.equal(sameOriginAllowed('http://codex-workstation.local:3321', options), true);
+  assert.equal(sameOriginAllowed('https://codex.example-tailnet.ts.net:3443', options), true);
 });
 
-test('forwarded host is used only from a trusted proxy and an allowed origin', () => {
+test('configured public origins work while unconfigured public origins remain blocked', () => {
   const options = readSecurityOptions({
-    PORT: '3321',
-    HTTPS_PORT: '3443',
     CODEXMOBILE_PUBLIC_URL: 'https://codex.example',
-    CODEXMOBILE_TRUSTED_PROXIES: '10.0.0.0/8'
-  });
-  const request = requestFixture({
-    headers: {
-      host: '10.0.0.10:8080',
-      'x-forwarded-host': 'codex.example',
-      'x-forwarded-proto': 'https'
-    },
-    socket: {
-      remoteAddress: '10.0.0.5',
-      localAddress: '10.0.0.10',
-      localPort: 8080
-    }
+    CODEXMOBILE_ALLOWED_ORIGINS: 'https://companion.example'
   });
 
-  assert.equal(requestCanonicalOrigin(request, options), 'https://codex.example');
-  assert.equal(requestOriginAllowed('https://codex.example', request, options), true);
-  assert.equal(requestOriginAllowed('https://evil.example', request, options), false);
+  assert.equal(sameOriginAllowed('https://codex.example', options), true);
+  assert.equal(sameOriginAllowed('https://companion.example', options), true);
+  assert.equal(sameOriginAllowed('https://evil.example', options), false);
 });
 
-test('phone pairing response excludes the code and host-only QR URLs', () => {
-  const internal = {
+test('unsafe requests use the configured and private-network origin policy', () => {
+  const base = readSecurityOptions({});
+  const requestOptions = {
+    ...base,
+    allowedOrigins: [...base.allowedOrigins, 'https://evil.example']
+  };
+
+  assert.deepEqual(
+    rejectUnsafeOrigin({ method: 'POST', headers: { origin: 'https://evil.example' } }, requestOptions),
+    { statusCode: 403, error: 'Cross-origin request rejected' }
+  );
+  assert.equal(
+    rejectUnsafeOrigin({ method: 'POST', headers: { origin: 'http://192.168.1.10:3321' } }, requestOptions),
+    null
+  );
+});
+
+test('phone pairing response excludes host-only QR links without changing terminal pairing', () => {
+  const phoneResponse = sanitizeJsonPayload({
     requestId: 'request-1',
-    code: 'ABCDEFGH23',
+    codeLength: 10,
+    expiresAt: '2026-08-04T12:00:00.000Z',
+    requestCooldownSeconds: 30,
+    pairingUrl: 'http://192.168.1.10:3321/pair?requestId=request-1&code=ABCDEFGH23',
+    qrUrl: 'http://192.168.1.10:3321/pair/qr?requestId=request-1&code=ABCDEFGH23'
+  });
+
+  assert.deepEqual(phoneResponse, {
+    requestId: 'request-1',
     codeLength: 10,
     expiresAt: '2026-08-04T12:00:00.000Z',
     requestCooldownSeconds: 30
-  };
-  const hostUrls = pairingRequestUrlsForRequest(
-    internal.requestId,
-    internal.code,
-    internal.codeLength,
-    'http://192.168.1.10:3321'
-  );
-  const response = publicPairingRequestResponse({ ...internal, ...hostUrls });
-
-  assert.deepEqual(response, {
-    requestId: internal.requestId,
-    codeLength: internal.codeLength,
-    expiresAt: internal.expiresAt,
-    requestCooldownSeconds: internal.requestCooldownSeconds
   });
-  assert.equal('code' in response, false);
-  assert.equal('pairingUrl' in response, false);
-  assert.equal('qrUrl' in response, false);
-  assert.match(hostUrls.qrUrl, /code=ABCDEFGH23/);
+
+  const terminalResponse = {
+    requestId: 'request-2',
+    code: 'ABCDEFGH23',
+    codeLength: 10,
+    expiresAt: '2026-08-04T12:00:00.000Z',
+    pairingUrl: 'http://127.0.0.1:3321/pair?requestId=request-2&code=ABCDEFGH23',
+    qrUrl: 'http://127.0.0.1:3321/pair/qr?requestId=request-2&code=ABCDEFGH23'
+  };
+  assert.equal(sanitizeJsonPayload(terminalResponse), terminalResponse);
 });

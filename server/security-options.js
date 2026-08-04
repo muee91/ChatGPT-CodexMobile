@@ -132,7 +132,8 @@ export function readSecurityOptions(env = process.env) {
 }
 
 function localNetworkHostnameAllowed(hostname, options = {}) {
-  const value = String(hostname || '').trim().toLowerCase();
+  const raw = String(hostname || '').trim().toLowerCase();
+  const value = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
   return Boolean(value) && (
     isPrivateRemoteAddress(value, options) ||
     !value.includes('.') ||
@@ -155,7 +156,9 @@ export function sameOriginAllowed(origin, options = {}) {
     if (url.hostname === 'localhost' && ['http:', 'https:', 'capacitor:'].includes(url.protocol)) {
       return true;
     }
-    return ['http:', 'https:'].includes(url.protocol) && localNetworkHostnameAllowed(url.hostname, options);
+    return ['http:', 'https:'].includes(url.protocol) &&
+      localNetworkHostnameAllowed(url.hostname, options) &&
+      (options.allowedOrigins || []).includes(value);
   } catch {
     return false;
   }

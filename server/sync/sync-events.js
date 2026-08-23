@@ -59,6 +59,7 @@ function baseEvent(payload = {}, eventType, extra = {}) {
     startedAt: clean(payload.startedAt),
     completedAt: clean(payload.completedAt),
     durationMs: Number.isFinite(Number(payload.durationMs)) ? Number(payload.durationMs) : null,
+    threadFallback: Boolean(payload.threadFallback),
     timestamp,
     ...extra
   };

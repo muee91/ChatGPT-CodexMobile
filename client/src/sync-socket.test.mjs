@@ -653,6 +653,11 @@ test('shouldPromoteCurrentDraftToThread rejects non-draft or cross-project sessi
     'project-1'
   ), false);
   assert.equal(shouldPromoteCurrentDraftToThread(
+    { id: 'thread-1', projectId: 'project-1', draft: false },
+    { sessionId: 'thread-2', previousSessionId: 'thread-1', threadFallback: true },
+    'project-1'
+  ), true);
+  assert.equal(shouldPromoteCurrentDraftToThread(
     { id: 'draft-1', projectId: 'project-1', draft: true },
     { sessionId: 'thread-1', previousSessionId: 'draft-1' },
     'project-2'
@@ -737,6 +742,47 @@ test('thread.started promotes the current draft to the accepted thread and rewri
   assert.equal(selectedSessionRef.current.id, 'thread-2');
   assert.equal(nextSelected.id, 'thread-2');
   assert.equal(nextMessages[0].sessionId, 'thread-2');
+});
+
+test('thread.started promotes the selected session after an active-writer fallback', () => {
+  const selectedSessionRef = {
+    current: { id: 'thread-old', projectId: 'project-1', draft: false, title: '旧线程' }
+  };
+  let nextSelected = selectedSessionRef.current;
+  let nextMessages = [
+    { id: 'm-1', role: 'user', sessionId: 'thread-old', turnId: 'turn-1', content: '恢复测试' }
+  ];
+
+  const result = applySyncSocketPayload({
+    type: 'sync-event',
+    event: {
+      eventType: 'thread.started',
+      projectId: 'project-1',
+      sessionId: 'thread-new',
+      previousSessionId: 'thread-old',
+      turnId: 'turn-1',
+      threadFallback: true,
+      timestamp: '2026-08-23T15:17:00.000Z'
+    }
+  }, {
+    selectedProjectRef: { current: { id: 'project-1' } },
+    selectedSessionRef,
+    setSelectedSession(update) {
+      nextSelected = typeof update === 'function' ? update(nextSelected) : update;
+    },
+    setSessionsByProject() {},
+    upsertSessionInProject(current = {}, _projectId, _session) {
+      return current;
+    },
+    setMessages(update) {
+      nextMessages = typeof update === 'function' ? update(nextMessages) : update;
+    }
+  });
+
+  assert.equal(result, true);
+  assert.equal(selectedSessionRef.current.id, 'thread-new');
+  assert.equal(nextSelected.id, 'thread-new');
+  assert.equal(nextMessages[0].sessionId, 'thread-new');
 });
 
 test('desktop.sync.status renders a visible status message for the selected session', () => {

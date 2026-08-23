@@ -646,6 +646,14 @@ export function createChatService({
     });
     const queueKey = resolveConversationKey(selectedSessionId, draftSessionId, requestedSessionId);
     const existingConversationState = getConversationQueue(queueKey);
+    if (
+      selectedSessionId &&
+      existingConversationState.sessionId &&
+      existingConversationState.sessionId !== selectedSessionId
+    ) {
+      selectedSessionId = existingConversationState.sessionId;
+      conversationSessionId = selectedSessionId;
+    }
     if (!selectedSessionId && draftSessionId && existingConversationState.sessionId) {
       const resumedSession = getSession(existingConversationState.sessionId);
       if (resumedSession?.projectId === project.id) {

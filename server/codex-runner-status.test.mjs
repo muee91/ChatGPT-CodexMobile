@@ -9,7 +9,13 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appServerAgentMessagePhase, shouldCompleteTurnFromAppServerItem, statusLabel } from './codex-runner.js';
+import {
+  appServerAgentMessagePhase,
+  isActiveWriterError,
+  runCodexTurn,
+  shouldCompleteTurnFromAppServerItem,
+  statusLabel
+} from './codex-runner.js';
 
 test('statusLabel uses mobile-friendly command labels', () => {
   assert.equal(statusLabel('command_execution', 'running'), '正在处理本地任务');
@@ -87,4 +93,52 @@ test('appServerAgentMessagePhase falls back to cached item phase for agent messa
     appServerAgentMessagePhase({ itemId: 'message-2' }, state, 'message-2'),
     ''
   );
+});
+
+test('active writer errors are recognized without treating unrelated failures as writer conflicts', () => {
+  assert.equal(
+    isActiveWriterError(new Error('thread abc already has an active writer')),
+    true
+  );
+  assert.equal(isActiveWriterError(new Error('thread abc not found')), false);
+});
+
+test('runCodexTurn starts a new thread when resuming an active-writer thread', async () => {
+  const events = [];
+  let notificationHandler = null;
+  const client = {
+    closed: new Promise(() => {}),
+    async request(method) {
+      if (method === 'thread/resume') {
+        throw new Error('thread old-thread already has an active writer');
+      }
+      if (method === 'thread/start') {
+        return { thread: { id: 'new-thread', cwd: '/tmp/project', path: '/tmp/new-thread.jsonl' } };
+      }
+      if (method === 'turn/start') {
+        notificationHandler({ method: 'turn/started', params: { turn: { id: 'app-turn-1' } } });
+        notificationHandler({ method: 'turn/completed', params: { turn: { id: 'app-turn-1' } } });
+        return { turn: { id: 'app-turn-1' } };
+      }
+      throw new Error(`unexpected method: ${method}`);
+    },
+    close() {}
+  };
+
+  const sessionId = await runCodexTurn({
+    sessionId: 'old-thread',
+    projectPath: '/tmp/project',
+    message: '测试 active writer 恢复',
+    turnId: 'mobile-turn-1',
+    createAppServerClient: async (options) => {
+      notificationHandler = options.onNotification;
+      return client;
+    }
+  }, (payload) => events.push(payload));
+
+  assert.equal(sessionId, 'new-thread');
+  assert.equal(events.find((event) => event.type === 'thread-started')?.sessionId, 'new-thread');
+  assert.equal(events.find((event) => event.type === 'thread-started')?.previousSessionId, 'old-thread');
+  assert.equal(events.find((event) => event.type === 'thread-started')?.threadFallback, true);
+  assert.equal(events.find((event) => event.type === 'chat-complete')?.sessionId, 'new-thread');
 });

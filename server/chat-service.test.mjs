@@ -1745,6 +1745,66 @@ test('sendChat starts a headless local Codex turn when desktop bridge is in head
   assert.equal(broadcasts.find((payload) => payload.type === 'chat-complete')?.source, 'headless-local');
 });
 
+test('sendChat follows a new headless thread after the selected thread has an active writer', async () => {
+  const runPayloads = [];
+  const { service, broadcasts } = makeChatService({
+    getSession: (id) => ({ id, projectId: 'project-1', projectPath: '/tmp/project' }),
+    getDesktopBridgeStatus: async () => ({
+      strict: false,
+      connected: true,
+      mode: 'headless-local',
+      reason: '桌面端 IPC 不可用',
+      capabilities: { read: true, createThread: true, sendToOpenDesktopThread: false }
+    }),
+    runCodexTurn: async (payload, emit) => {
+      runPayloads.push(payload);
+      const sessionId = runPayloads.length === 1 ? 'new-headless-thread' : payload.sessionId;
+      emit({
+        type: 'thread-started',
+        sessionId,
+        previousSessionId: payload.sessionId,
+        turnId: payload.turnId,
+        threadFallback: runPayloads.length === 1
+      });
+      emit({
+        type: 'chat-complete',
+        sessionId,
+        previousSessionId: payload.sessionId,
+        turnId: payload.turnId
+      });
+      return sessionId;
+    }
+  });
+
+  await service.sendChat({
+    projectId: 'project-1',
+    sessionId: 'thread-1',
+    clientTurnId: 'active-writer-turn-1',
+    message: '第一次发送'
+  });
+  await flushQueuedWork();
+
+  await service.sendChat({
+    projectId: 'project-1',
+    sessionId: 'thread-1',
+    clientTurnId: 'active-writer-turn-2',
+    message: '继续发送'
+  });
+  await flushQueuedWork();
+
+  assert.equal(runPayloads[0].sessionId, 'thread-1');
+  assert.equal(runPayloads[1].sessionId, 'new-headless-thread');
+  assert.equal(
+    broadcasts.some((payload) =>
+      payload.type === 'thread-started' &&
+      payload.sessionId === 'new-headless-thread' &&
+      payload.previousSessionId === 'thread-1' &&
+      payload.threadFallback === true
+    ),
+    true
+  );
+});
+
 test('sendChat passes plan collaboration mode to headless local Codex turns', async () => {
   let runPayload = null;
   const { service } = makeChatService({

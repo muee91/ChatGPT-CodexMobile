@@ -180,6 +180,19 @@ test('desktop thread updates without an explicit runtime status do not create ru
   assert.deepEqual(store.snapshot().runtimeById, {});
 });
 
+test('thread fallback metadata is preserved in the normalized sync event', () => {
+  const [event] = normalizeLegacyPayloadToSyncEvents({
+    type: 'thread-started',
+    projectId: 'project-1',
+    sessionId: 'thread-new',
+    previousSessionId: 'thread-old',
+    threadFallback: true
+  });
+
+  assert.equal(event.eventType, 'thread.started');
+  assert.equal(event.threadFallback, true);
+});
+
 test('model updates keep thread scope in sync state', () => {
   const store = createSyncStore();
   const [event] = normalizeLegacyPayloadToSyncEvents({

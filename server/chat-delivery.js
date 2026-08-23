@@ -60,6 +60,8 @@ export function runQueuedHeadlessChatJob({
 }) {
   const metadataUpdates = [];
   let lastBackgroundThread = null;
+  let fallbackPreviousSessionId = null;
+  let fallbackSessionId = null;
   let terminalEventSeen = false;
   let desktopRefreshRequested = false;
 
@@ -123,7 +125,7 @@ export function runQueuedHeadlessChatJob({
   }
 
   function rememberStartedBackgroundThread(payload) {
-    if (!payload?.sessionId || !job.draftSessionId) {
+    if (!payload?.sessionId || (!job.draftSessionId && !payload.threadFallback)) {
       return;
     }
     const updatedAt = payload.startedAt || new Date().toISOString();
@@ -195,6 +197,17 @@ export function runQueuedHeadlessChatJob({
         ...payload,
         source: payload?.source || 'headless-local'
       };
+      if (eventPayload.threadFallback && eventPayload.sessionId) {
+        fallbackSessionId = eventPayload.sessionId;
+        fallbackPreviousSessionId = eventPayload.previousSessionId || job.selectedSessionId || null;
+      } else if (
+        fallbackSessionId &&
+        fallbackPreviousSessionId &&
+        eventPayload.sessionId === fallbackSessionId &&
+        !eventPayload.previousSessionId
+      ) {
+        eventPayload.previousSessionId = fallbackPreviousSessionId;
+      }
       if (['chat-complete', 'chat-error', 'chat-aborted'].includes(eventPayload.type)) {
         terminalEventSeen = true;
         reportDesktopSyncStatus({

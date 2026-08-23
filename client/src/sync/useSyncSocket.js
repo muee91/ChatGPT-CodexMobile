@@ -56,11 +56,14 @@ function syncEventMatchesCurrent(event, selectedSessionRef) {
 }
 
 export function shouldPromoteCurrentDraftToThread(currentSession = null, event = {}, projectId = '') {
-  if (!currentSession?.draft || !event?.sessionId) {
+  if (!currentSession || !event?.sessionId) {
     return false;
   }
   const matchedDraftId = String(event.draftSessionId || event.previousSessionId || '').trim();
   if (!matchedDraftId || String(currentSession.id || '') !== matchedDraftId) {
+    return false;
+  }
+  if (!currentSession.draft && !event.threadFallback) {
     return false;
   }
   if (

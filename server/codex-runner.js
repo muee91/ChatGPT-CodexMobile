@@ -71,6 +71,10 @@ function turnInactivityTimeoutError() {
   return error;
 }
 
+export function isActiveWriterError(error) {
+  return /already has an active writer/i.test(String(error?.message || error || ''));
+}
+
 function isTurnTimeoutError(error) {
   return error?.code === 'CODEXMOBILE_TURN_TIMEOUT';
 }
@@ -839,7 +843,7 @@ function abortError() {
   return error;
 }
 
-export async function runCodexTurn({ sessionId, draftSessionId, projectPath, message, attachments = [], selectedSkills = [], model, reasoningEffort, serviceTier, permissionMode, collaborationMode = null, turnId: providedTurnId, onCodexServerRequest = null, onCodexServerRequestResolved = null }, emit) {
+export async function runCodexTurn({ sessionId, draftSessionId, projectPath, message, attachments = [], selectedSkills = [], model, reasoningEffort, serviceTier, permissionMode, collaborationMode = null, turnId: providedTurnId, onCodexServerRequest = null, onCodexServerRequestResolved = null, createAppServerClient = createCodexAppServerClient }, emit) {
   const workingDirectory = await ensureAsciiWorkingDirectory(projectPath);
   const { sandboxMode, approvalPolicy } = mapPermissionMode(permissionMode);
   const feishuSkillKeys = detectFeishuSkillKeys(message);
@@ -880,6 +884,8 @@ export async function runCodexTurn({ sessionId, draftSessionId, projectPath, mes
 
   let currentSessionId = sessionId || null;
   let previousSessionId = draftSessionId || sessionId || null;
+  let activeWriterFallback = false;
+  let threadStartedNotificationSeen = false;
   let client = null;
   let completionResolve = null;
   let completionReject = null;
@@ -919,7 +925,7 @@ export async function runCodexTurn({ sessionId, draftSessionId, projectPath, mes
       larkCliContext.env.CODEXMOBILE_SESSION_ID = sessionId || draftSessionId || '';
     }
 
-    client = await createCodexAppServerClient({
+    client = await createAppServerClient({
       env: larkCliContext.env || { ...process.env },
       cwd: workingDirectory,
       clientInfo: { name: 'CodexMobile', title: null, version: '0.1.0' },
@@ -952,6 +958,7 @@ export async function runCodexTurn({ sessionId, draftSessionId, projectPath, mes
         resetTurnInactivityTimeout();
         const params = appMessage.params || {};
         if (appMessage.method === 'thread/started' && params.thread?.id) {
+          threadStartedNotificationSeen = true;
           const fromSessionId = previousSessionId || currentSessionId || draftSessionId || params.thread.id;
           currentSessionId = params.thread.id;
           run.sessionId = currentSessionId;
@@ -964,6 +971,7 @@ export async function runCodexTurn({ sessionId, draftSessionId, projectPath, mes
             projectPath,
             cwd: params.thread.cwd || workingDirectory,
             filePath: params.thread.path || params.thread.filePath || null,
+            threadFallback: activeWriterFallback,
             startedAt: new Date().toISOString()
           });
           return;
@@ -1015,11 +1023,54 @@ export async function runCodexTurn({ sessionId, draftSessionId, projectPath, mes
     if (normalizedServiceTier) {
       threadParams.serviceTier = normalizedServiceTier;
     }
-    const threadResponse = sessionId
-      ? await client.request('thread/resume', { threadId: sessionId, ...threadParams }, { timeoutMs: 30_000 })
-      : await client.request('thread/start', threadParams, { timeoutMs: 30_000 });
+    let threadResponse;
+    if (!sessionId) {
+      threadResponse = await client.request('thread/start', threadParams, { timeoutMs: 30_000 });
+    } else {
+      try {
+        threadResponse = await client.request(
+          'thread/resume',
+          { threadId: sessionId, ...threadParams },
+          { timeoutMs: 30_000 }
+        );
+      } catch (error) {
+        if (!isActiveWriterError(error)) {
+          throw error;
+        }
+        activeWriterFallback = true;
+        emit({
+          type: 'status-update',
+          sessionId,
+          previousSessionId: sessionId,
+          turnId,
+          kind: 'turn',
+          status: 'running',
+          label: '原线程被占用，已切换新线程',
+          detail: '当前线程仍有桌面端 writer，后台已在同一项目创建独立线程继续发送。',
+          timestamp: new Date().toISOString()
+        });
+        threadResponse = await client.request('thread/start', threadParams, { timeoutMs: 30_000 });
+      }
+    }
     const desktopThread = threadResponse?.thread || {};
-    currentSessionId = desktopThread.id || sessionId || `codex-${Date.now()}`;
+    const createdThreadId = String(desktopThread.id || '').trim();
+    if (activeWriterFallback && !createdThreadId) {
+      throw new Error('Codex 后台未返回新线程');
+    }
+    currentSessionId = createdThreadId || sessionId || `codex-${Date.now()}`;
+    if (activeWriterFallback && !threadStartedNotificationSeen) {
+      emit({
+        type: 'thread-started',
+        sessionId: currentSessionId,
+        previousSessionId: sessionId,
+        turnId,
+        projectPath,
+        cwd: desktopThread.cwd || workingDirectory,
+        filePath: desktopThread.path || desktopThread.filePath || null,
+        threadFallback: true,
+        startedAt: new Date().toISOString()
+      });
+    }
     run.thread = desktopThread;
     run.client = client;
     run.sessionId = currentSessionId;
@@ -1028,6 +1079,7 @@ export async function runCodexTurn({ sessionId, draftSessionId, projectPath, mes
       sessionId: currentSessionId,
       previousSessionId,
       turnId,
+      threadFallback: activeWriterFallback,
       projectPath,
       cwd: desktopThread.cwd || workingDirectory,
       filePath: desktopThread.path || desktopThread.filePath || null,

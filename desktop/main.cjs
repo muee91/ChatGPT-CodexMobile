@@ -1,13 +1,18 @@
 const { app, BrowserWindow, Menu, Tray, dialog, nativeImage, shell } = require('electron');
-const { spawn } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { promisify } = require('node:util');
+const { pairingQrUrl, preferredPairingAddress } = require('./pairing-qr.cjs');
 
 const PORT = Number(process.env.PORT || 3321);
 const SERVER_URL = `http://127.0.0.1:${PORT}`;
 const STATUS_URL = `${SERVER_URL}/api/status`;
+const execFileAsync = promisify(execFile);
 
 let mainWindow = null;
+let pairingWindow = null;
 let tray = null;
 let quitting = false;
 let backendState = { healthy: false, busy: false, detail: '正在检查后端' };
@@ -149,6 +154,81 @@ async function pairDesktopSession() {
   });
 }
 
+async function defaultRouteInterface() {
+  if (process.platform !== 'darwin') {
+    return '';
+  }
+  try {
+    const { stdout } = await execFileAsync('route', ['-n', 'get', 'default'], { timeout: 1500 });
+    return String(stdout || '').match(/^\s*interface:\s*(\S+)\s*$/m)?.[1] || '';
+  } catch {
+    return '';
+  }
+}
+
+async function requestPhonePairingQr(status = null) {
+  const response = await fetch(`${SERVER_URL}/api/pair/terminal-request`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceName: `CodexMobile Mobile Pairing (${process.platform})` }),
+    signal: AbortSignal.timeout(5000)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result?.requestId || !result?.code) {
+    throw new Error(result?.error || '无法生成手机配对二维码');
+  }
+  const host = preferredPairingAddress(os.networkInterfaces(), await defaultRouteInterface());
+  const qrUrl = pairingQrUrl({
+    host,
+    port: status?.port || PORT,
+    requestId: result.requestId,
+    code: result.code,
+    codeLength: result.codeLength
+  });
+  if (!qrUrl) {
+    throw new Error('未找到可供手机访问的局域网地址。请让电脑连接 Wi-Fi 或手机热点后重试。');
+  }
+  return { host, qrUrl };
+}
+
+async function showPhonePairingQr() {
+  try {
+    let status = await readBackendStatus();
+    if (!status) {
+      const started = await controlBackend('start', { quiet: true });
+      if (!started) {
+        return;
+      }
+      status = await readBackendStatus();
+    }
+    const pairing = await requestPhonePairingQr(status);
+    if (!pairingWindow || pairingWindow.isDestroyed()) {
+      pairingWindow = new BrowserWindow({
+        title: 'CodexMobile 手机配对',
+        width: 580,
+        height: 700,
+        resizable: true,
+        parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true
+        }
+      });
+      pairingWindow.on('closed', () => {
+        pairingWindow = null;
+      });
+    }
+    await pairingWindow.loadURL(pairing.qrUrl);
+    pairingWindow.setTitle(`CodexMobile 手机配对 (${pairing.host})`);
+    pairingWindow.show();
+    pairingWindow.focus();
+  } catch (error) {
+    appendDesktopLog(`mobile pairing QR failed ${error?.stack || error}`);
+    dialog.showErrorBox('手机配对二维码', error?.message || '无法生成手机配对二维码');
+  }
+}
+
 async function loadApplicationWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
@@ -247,6 +327,7 @@ function updateNativeMenus() {
       { label: statusLabel, enabled: false },
       { type: 'separator' },
       { label: '打开 CodexMobile', click: showMainWindow },
+      { label: '显示手机配对二维码', enabled: !backendState.busy, click: showPhonePairingQr },
       { label: '启动后端', enabled: !backendState.busy && !backendState.healthy, click: () => controlBackend('start') },
       { label: '重启后端', enabled: !backendState.busy, click: () => controlBackend('restart') },
       { label: '关闭后端', enabled: !backendState.busy && backendState.healthy, click: () => controlBackend('stop') },
@@ -378,6 +459,7 @@ function installApplicationMenu() {
         { role: 'about' },
         { type: 'separator' },
         { label: '打开 CodexMobile', click: showMainWindow },
+        { label: '显示手机配对二维码', click: showPhonePairingQr },
         { label: '重启后端', click: () => controlBackend('restart') },
         { label: '打开后端日志', click: openBackendLogs },
         { type: 'separator' },

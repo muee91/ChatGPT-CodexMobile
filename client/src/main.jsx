@@ -11,12 +11,12 @@
  * Outward: Vite HTML 入口 `index.html` 所引脚本。
  */
 
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './App.jsx';
 import './styles/index.css';
 
-// Keep document conversion and screenshot-only code out of the chat startup path.
+// Keep the workbench and route-specific tools out of the initial WebView parse path.
+const App = lazy(() => import('./app/App.jsx'));
 const FilePreviewApp = lazy(() => import('./app/FilePreviewApp.jsx'));
 const DemoScreenshotApp = lazy(() => import('./demo/DemoScreenshotApp.jsx'));
 
@@ -26,10 +26,26 @@ const RootApp = window.location.pathname === '/preview/file'
     ? DemoScreenshotApp
     : App;
 
+function AppReady({ children }) {
+  useEffect(() => {
+    const startup = document.getElementById('codexmobile-startup');
+    if (!startup) {
+      return undefined;
+    }
+    startup.classList.add('is-ready');
+    const removeTimer = window.setTimeout(() => startup.remove(), 180);
+    return () => window.clearTimeout(removeTimer);
+  }, []);
+
+  return children;
+}
+
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <Suspense fallback={<main role="status">正在加载…</main>}>
-      <RootApp />
+    <Suspense fallback={null}>
+      <AppReady>
+        <RootApp />
+      </AppReady>
     </Suspense>
   </React.StrictMode>
 );

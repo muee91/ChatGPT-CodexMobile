@@ -25,6 +25,7 @@ import {
 } from '../composer/composer-options.js';
 import { useComposerSelections } from '../composer/useComposerSelections.js';
 import { useQueueDrafts } from '../composer/useQueueDrafts.js';
+import { readStoredComposerDrafts, writeStoredComposerDrafts } from '../composer-draft-storage.js';
 import { connectionRecoveryState } from '../connection-recovery.js';
 import { createInitialFileManagerState, fileManagerReducer, rememberFileManagerView } from '../file-manager-state.js';
 import { mergeContextStatus, normalizeContextStatus } from './context-status.js';
@@ -74,7 +75,8 @@ const EMPTY_COMPOSER_DRAFT = Object.freeze({
   attachments: [],
   fileMentions: [],
   collaborationMode: null,
-  selectedSkillPaths: []
+  selectedSkillPaths: [],
+  updatedAt: 0
 });
 
 function composerDraftKeyForSelection(session, project) {
@@ -93,12 +95,19 @@ function normalizeComposerDraft(draft = null) {
     attachments: Array.isArray(draft?.attachments) ? draft.attachments : [],
     fileMentions: Array.isArray(draft?.fileMentions) ? draft.fileMentions : [],
     collaborationMode: draft?.collaborationMode === 'plan' ? 'plan' : null,
-    selectedSkillPaths: Array.isArray(draft?.selectedSkillPaths) ? draft.selectedSkillPaths.filter(Boolean) : []
+    selectedSkillPaths: Array.isArray(draft?.selectedSkillPaths) ? draft.selectedSkillPaths.filter(Boolean) : [],
+    updatedAt: Number(draft?.updatedAt) || 0
   };
 }
 
 function resolveStateUpdate(nextValue, previousValue) {
   return typeof nextValue === 'function' ? nextValue(previousValue) : nextValue;
+}
+
+function initialComposerDrafts() {
+  return Object.fromEntries(
+    Object.entries(readStoredComposerDrafts()).map(([key, draft]) => [key, normalizeComposerDraft(draft)])
+  );
 }
 
 function gitBranchDraft(project) {
@@ -173,7 +182,7 @@ export default function App() {
     }
     return localStorage.getItem('codexmobile.reasoningEffort') || DEFAULT_REASONING_EFFORT;
   });
-  const [composerDraftsByKey, setComposerDraftsByKey] = useState({});
+  const [composerDraftsByKey, setComposerDraftsByKey] = useState(initialComposerDrafts);
   const [runningById, setRunningById] = useState({});
   const [threadRuntimeById, setThreadRuntimeById] = useState({});
   const [submittingBySessionKey, setSubmittingBySessionKey] = useState({});
@@ -272,14 +281,16 @@ export default function App() {
   const setInput = useCallback((nextValue) => {
     updateComposerDraftForKey(composerDraftKey, (current) => ({
       ...current,
-      input: String(resolveStateUpdate(nextValue, current.input) || '')
+      input: String(resolveStateUpdate(nextValue, current.input) || ''),
+      updatedAt: Date.now()
     }));
   }, [composerDraftKey, updateComposerDraftForKey]);
 
   const setInputForDraftKey = useCallback((draftKey, nextValue) => {
     updateComposerDraftForKey(draftKey, (current) => ({
       ...current,
-      input: String(resolveStateUpdate(nextValue, current.input) || '')
+      input: String(resolveStateUpdate(nextValue, current.input) || ''),
+      updatedAt: Date.now()
     }));
   }, [updateComposerDraftForKey]);
 
@@ -550,6 +561,10 @@ export default function App() {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    writeStoredComposerDrafts(composerDraftsByKey);
+  }, [composerDraftsByKey]);
 
   useEffect(() => {
     threadRuntimeByIdRef.current = threadRuntimeById;

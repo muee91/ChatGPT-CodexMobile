@@ -7,6 +7,7 @@
  * - assetSignatureFromHtml / assetSignatureFromDocument — 提取 Vite 构建资源签名。
  * - frontendAssetsChanged — 判断当前包与最新包是否不同。
  * - fetchLatestAssetSignature — 拉取最新 index.html 并生成签名。
+ * - isElectronRenderer / isCapacitorNativeShell / cacheBustedReloadUrl — 平台与刷新地址判断。
  * - usePwaUpdate — React hook，暴露新版本提示状态与刷新动作。
  *
  * Inward: React hooks、浏览器 fetch / navigator.serviceWorker / DOM。
@@ -60,6 +61,32 @@ export function frontendAssetsChanged(currentSignature, latestSignature) {
   return Boolean(currentSignature && latestSignature && currentSignature !== latestSignature);
 }
 
+export function isElectronRenderer(win = globalThis.window) {
+  return /\bElectron\/\d+/i.test(String(win?.navigator?.userAgent || ''));
+}
+
+export function isCapacitorNativeShell(win = globalThis.window) {
+  try {
+    return Boolean(win?.Capacitor?.isNativePlatform?.());
+  } catch {
+    return false;
+  }
+}
+
+export function pwaUpdateChecksEnabled(win = globalThis.window) {
+  return !isElectronRenderer(win) && !isCapacitorNativeShell(win);
+}
+
+export function cacheBustedReloadUrl(href = '', cacheBust = Date.now()) {
+  try {
+    const url = new URL(href || 'http://localhost/');
+    url.searchParams.set('__codexmobile_pwa_reload', String(cacheBust));
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
 export async function fetchLatestAssetSignature({
   fetchImpl = globalThis.fetch,
   location = globalThis.location,
@@ -79,13 +106,6 @@ export async function fetchLatestAssetSignature({
     return '';
   }
   return assetSignatureFromHtml(await response.text(), url.toString());
-}
-
-function markWaitingWorker(registration) {
-  const worker = registration?.waiting || registration?.installing;
-  if (worker?.postMessage) {
-    worker.postMessage({ type: 'SKIP_WAITING' });
-  }
 }
 
 export function usePwaUpdate({
@@ -115,7 +135,7 @@ export function usePwaUpdate({
   }, []);
 
   const checkNow = useCallback(async () => {
-    if (updateVisibleRef.current) {
+    if (!pwaUpdateChecksEnabled(win) || updateVisibleRef.current) {
       return false;
     }
     const currentSignature = currentSignatureRef.current || assetSignatureFromDocument(doc);
@@ -138,7 +158,7 @@ export function usePwaUpdate({
   }, [doc, fetchImpl, showUpdate, win]);
 
   useEffect(() => {
-    if (!win || !doc) {
+    if (!win || !doc || !pwaUpdateChecksEnabled(win)) {
       return undefined;
     }
     currentSignatureRef.current = assetSignatureFromDocument(doc);
@@ -146,7 +166,6 @@ export function usePwaUpdate({
     let timer = 0;
     let interval = 0;
     const serviceWorker = win.navigator?.serviceWorker;
-    const hadControllerAtStart = Boolean(serviceWorker?.controller);
 
     const safeCheck = () => {
       if (!cancelled) {
@@ -159,12 +178,6 @@ export function usePwaUpdate({
         safeCheck();
       }
     };
-    const onControllerChange = () => {
-      if (hadControllerAtStart && serviceWorker?.controller) {
-        showUpdate('service-worker');
-      }
-    };
-
     if (serviceWorker?.register) {
       serviceWorker.register(SERVICE_WORKER_PATH)
         .then((registration) => {
@@ -175,21 +188,8 @@ export function usePwaUpdate({
           if (updatePromise?.catch) {
             updatePromise.catch(() => {});
           }
-          registration.addEventListener?.('updatefound', () => {
-            const installing = registration.installing;
-            installing?.addEventListener?.('statechange', () => {
-              if (!serviceWorker.controller) {
-                return;
-              }
-              if (installing.state === 'installed' || installing.state === 'activated') {
-                markWaitingWorker(registration);
-                showUpdate('service-worker');
-              }
-            });
-          });
         })
         .catch(() => {});
-      serviceWorker.addEventListener?.('controllerchange', onControllerChange);
     }
 
     timer = win.setTimeout?.(safeCheck, 1500) || 0;
@@ -207,11 +207,15 @@ export function usePwaUpdate({
       }
       win.removeEventListener?.('focus', onFocus);
       doc.removeEventListener?.('visibilitychange', onVisibilityChange);
-      serviceWorker?.removeEventListener?.('controllerchange', onControllerChange);
     };
   }, [checkIntervalMs, checkNow, doc, showUpdate, win]);
 
   const refresh = useCallback(() => {
+    const targetUrl = cacheBustedReloadUrl(win?.location?.href);
+    if (targetUrl && typeof win?.location?.replace === 'function') {
+      win.location.replace(targetUrl);
+      return;
+    }
     win?.location?.reload?.();
   }, [win]);
 

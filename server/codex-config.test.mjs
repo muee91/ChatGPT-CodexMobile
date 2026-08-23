@@ -70,3 +70,44 @@ test('registerProjectlessThread preserves concurrent registrations in global sta
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('readCodexWorkspaceState resolves current Codex local project IDs to named roots', async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-config-projects-test-'));
+  const codexHome = path.join(tempRoot, '.codex');
+  const currentProjectRoot = path.join(tempRoot, 'current-project');
+  const legacyProjectRoot = path.join(tempRoot, 'legacy-project');
+  try {
+    const {
+      CODEX_GLOBAL_STATE_PATH,
+      readCodexWorkspaceState
+    } = await importCodexConfigWithHome(codexHome);
+
+    await fs.mkdir(codexHome, { recursive: true });
+    await fs.writeFile(
+      CODEX_GLOBAL_STATE_PATH,
+      JSON.stringify({
+        'project-order': ['local-current-project', legacyProjectRoot, 'missing-project-id'],
+        'electron-saved-workspace-roots': [legacyProjectRoot],
+        'local-projects': {
+          'local-current-project': {
+            id: 'local-current-project',
+            name: 'Current Project',
+            rootPaths: [currentProjectRoot]
+          }
+        },
+        'electron-workspace-root-labels': {
+          [legacyProjectRoot]: 'Legacy Project'
+        }
+      }),
+      'utf8'
+    );
+
+    const workspaceState = await readCodexWorkspaceState();
+    assert.deepEqual(workspaceState.projects, [
+      { path: currentProjectRoot, label: 'Current Project' },
+      { path: legacyProjectRoot, label: 'Legacy Project' }
+    ]);
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});

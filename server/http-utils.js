@@ -63,6 +63,9 @@ export function staticCacheControl(ext, filePath = '') {
     return 'no-store';
   }
   const normalized = filePath.split(path.sep).join('/');
+  if (normalized.endsWith('/codexmobile-sw.js')) {
+    return 'no-store';
+  }
   if (normalized.includes('/assets/')) {
     return 'public, max-age=31536000, immutable';
   }

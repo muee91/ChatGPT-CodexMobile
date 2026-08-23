@@ -19,6 +19,9 @@ import { normalizeContextStatus } from './context-status.js';
 import { applySyncSocketPayload } from '../sync/useSyncSocket.js';
 import { selectRuntimeForSession } from '../sync/sync-selectors.js';
 
+const WEBSOCKET_RECONNECT_BASE_MS = 1_000;
+const WEBSOCKET_RECONNECT_MAX_MS = 15_000;
+
 export function projectShellsFromSyncProjects(projects = []) {
   return projects.map(({ sessions, ...project }) => project);
 }
@@ -85,6 +88,14 @@ export function shouldCompleteLocalTurnBeforeRefresh(payload = {}) {
 export function shouldRefreshCurrentSessionAfterReconnect(session = null) {
   const sessionId = String(session?.id || '').trim();
   return Boolean(sessionId && !sessionId.startsWith('draft-'));
+}
+
+export function websocketReconnectDelayMs(attempt = 1) {
+  const normalizedAttempt = Math.max(1, Number(attempt) || 1);
+  return Math.min(
+    WEBSOCKET_RECONNECT_MAX_MS,
+    WEBSOCKET_RECONNECT_BASE_MS * (2 ** Math.min(normalizedAttempt - 1, 4))
+  );
 }
 
 function coalescedAssistantDeltaKey(payload = {}) {
@@ -172,10 +183,39 @@ export function useAppWebSocket({
     }
 
     let stopped = false;
-    let reconnectTimer = null;
     let pendingPayloads = [];
     let payloadFlushFrame = null;
     let queueRefreshTimer = null;
+    let reconnectAttempts = 0;
+    let reconnectTimer = null;
+    let handshakeTimer = null;
+    let connecting = false;
+    let socketReady = false;
+
+    function clearReconnectTimer() {
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    }
+
+    function clearHandshakeTimer() {
+      if (handshakeTimer) {
+        window.clearTimeout(handshakeTimer);
+        handshakeTimer = null;
+      }
+    }
+
+    function scheduleReconnect() {
+      if (stopped || reconnectTimer || connecting || socketReady) {
+        return;
+      }
+      reconnectAttempts += 1;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, websocketReconnectDelayMs(reconnectAttempts));
+    }
 
     // Keep the synchronous refs aligned with the reducer before processing the
     // snapshot's project/context branch in the same incoming WebSocket frame.
@@ -326,10 +366,6 @@ export function useAppWebSocket({
       return syncResult;
     }
 
-    async function refreshCurrentSessionAfterReconnect() {
-      await resyncFromServer({ refreshCurrentSelection: true });
-    }
-
     function applySyncPayload(payload = {}) {
       applyModelFromSyncPayload(payload);
       applySyncSocketPayload(payload, {
@@ -427,51 +463,83 @@ export function useAppWebSocket({
     }
 
     const connect = async () => {
+      if (stopped || connecting || socketReady) {
+        return;
+      }
+      connecting = true;
       setConnectionState('connecting');
       let ticket = '';
       try {
         ticket = await createWebSocketTicket();
       } catch (error) {
+        connecting = false;
         setConnectionState('disconnected');
         if (error?.status === 401) {
           stopped = true;
           onAuthRevoked?.();
           return;
         }
-        if (!stopped) {
-          reconnectTimer = window.setTimeout(connect, 1200);
-        }
+        scheduleReconnect();
         return;
       }
       if (stopped) {
+        connecting = false;
         return;
       }
-      const ws = new WebSocket(websocketUrl(ticket));
+      let ws;
+      try {
+        ws = new WebSocket(websocketUrl(ticket));
+      } catch {
+        connecting = false;
+        setConnectionState('disconnected');
+        scheduleReconnect();
+        return;
+      }
       wsRef.current = ws;
 
-      ws.onopen = () => setConnectionState('connecting');
+      ws.onopen = () => {
+        handshakeTimer = window.setTimeout(() => {
+          if (wsRef.current === ws && !socketReady) {
+            ws.close(4000, 'CodexMobile WebSocket handshake timeout');
+          }
+        }, 8_000);
+      };
       ws.onclose = (event) => {
+        if (wsRef.current !== ws) {
+          return;
+        }
+        clearHandshakeTimer();
+        wsRef.current = null;
+        connecting = false;
+        socketReady = false;
         setConnectionState('disconnected');
         if (event.code === 1008 || String(event.reason || '').toLowerCase().includes('revoked')) {
           stopped = true;
           onAuthRevoked?.();
           return;
         }
-        if (!stopped) {
-          reconnectTimer = window.setTimeout(connect, 1200);
+        scheduleReconnect();
+      };
+      ws.onerror = () => {
+        if (wsRef.current === ws) {
+          setConnectionState('disconnected');
         }
       };
-      ws.onerror = () => setConnectionState('disconnected');
       ws.onmessage = (event) => {
         const payload = JSON.parse(event.data);
         if (payload.type === 'connected') {
+          clearHandshakeTimer();
+          connecting = false;
+          socketReady = Boolean(payload.status?.connected);
+          reconnectAttempts = 0;
           setStatus(payload.status || defaultStatus);
           setConnectionState(payload.status?.connected ? 'connected' : 'disconnected');
           if (payload.status?.syncState) {
             applySyncPayload({ type: 'sync-state', state: payload.status.syncState });
           }
-          if (payload.status?.connected) {
-            refreshCurrentSessionAfterReconnect().catch(() => null);
+          if (!payload.status?.connected) {
+            socketReady = false;
+            ws.close();
           }
           return;
         }
@@ -490,30 +558,29 @@ export function useAppWebSocket({
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return;
       }
-      resyncFromServer({ refreshCurrentSelection: true }).catch(() => null);
+      if (!socketReady) {
+        void connect();
+        return;
+      }
+      resyncFromServer({ refreshCurrentSelection: false }).catch(() => null);
     };
     const handleVisibilityChange = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         resyncOnForeground();
       }
     };
-    const resyncInterval = window.setInterval(resyncOnForeground, 15000);
-    window.addEventListener('focus', resyncOnForeground);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       stopped = true;
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer);
-      }
+      clearReconnectTimer();
+      clearHandshakeTimer();
       if (payloadFlushFrame !== null) {
         window.cancelAnimationFrame(payloadFlushFrame);
       }
       if (queueRefreshTimer) {
         window.clearTimeout(queueRefreshTimer);
       }
-      window.clearInterval(resyncInterval);
-      window.removeEventListener('focus', resyncOnForeground);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       wsRef.current?.close();
       setConnectionState('disconnected');

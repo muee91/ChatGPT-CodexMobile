@@ -71,15 +71,13 @@ public class LocalNetworkPlugin extends Plugin {
     }
 
     private List<String> readLocalIpv4Addresses() {
-        List<String> wifiAddresses = readWifiIpv4Addresses();
-        if (!wifiAddresses.isEmpty()) {
-            return wifiAddresses;
-        }
-        List<String> activeAddresses = readActiveNetworkIpv4Addresses();
-        if (!activeAddresses.isEmpty()) {
-            return activeAddresses;
-        }
-        return readPrivateIpv4AddressesFromAllInterfaces();
+        // A phone acting as a hotspot can expose its LAN address on a tethering
+        // interface while Wi-Fi reports another address or none at all.
+        Set<String> addresses = new LinkedHashSet<>();
+        addresses.addAll(readWifiIpv4Addresses());
+        addresses.addAll(readActiveNetworkIpv4Addresses());
+        addresses.addAll(readPrivateIpv4AddressesFromAllInterfaces());
+        return new ArrayList<>(addresses);
     }
 
     private List<String> readWifiIpv4Addresses() {
@@ -123,25 +121,29 @@ public class LocalNetworkPlugin extends Plugin {
             if (manager == null) {
                 return addresses;
             }
-            Network network = manager.getActiveNetwork();
-            if (network == null) {
-                return addresses;
+            Set<Network> networks = new LinkedHashSet<>();
+            Network activeNetwork = manager.getActiveNetwork();
+            if (activeNetwork != null) {
+                networks.add(activeNetwork);
             }
-            LinkProperties properties = manager.getLinkProperties(network);
-            if (properties == null) {
-                return addresses;
-            }
-            for (LinkAddress linkAddress : properties.getLinkAddresses()) {
-                InetAddress address = linkAddress.getAddress();
-                if (!(address instanceof Inet4Address)) {
+            Collections.addAll(networks, manager.getAllNetworks());
+            for (Network network : networks) {
+                LinkProperties properties = manager.getLinkProperties(network);
+                if (properties == null) {
                     continue;
                 }
-                String hostAddress = address.getHostAddress();
-                if (hostAddress == null || hostAddress.isEmpty() || !isPrivateIpv4(hostAddress)) {
-                    continue;
-                }
-                if (!addresses.contains(hostAddress)) {
-                    addresses.add(hostAddress);
+                for (LinkAddress linkAddress : properties.getLinkAddresses()) {
+                    InetAddress address = linkAddress.getAddress();
+                    if (!(address instanceof Inet4Address)) {
+                        continue;
+                    }
+                    String hostAddress = address.getHostAddress();
+                    if (hostAddress == null || hostAddress.isEmpty() || !isPrivateIpv4(hostAddress)) {
+                        continue;
+                    }
+                    if (!addresses.contains(hostAddress)) {
+                        addresses.add(hostAddress);
+                    }
                 }
             }
         } catch (Exception ignored) {
@@ -158,7 +160,7 @@ public class LocalNetworkPlugin extends Plugin {
                 return addresses;
             }
             for (NetworkInterface networkInterface : Collections.list(interfaces)) {
-                if (!networkInterface.isUp() || networkInterface.isLoopback() || networkInterface.isVirtual()) {
+                if (!networkInterface.isUp() || networkInterface.isLoopback()) {
                     continue;
                 }
                 for (InetAddress address : Collections.list(networkInterface.getInetAddresses())) {

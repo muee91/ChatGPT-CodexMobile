@@ -340,6 +340,11 @@ export async function readCodexWorkspaceState() {
     const raw = await fs.readFile(CODEX_GLOBAL_STATE_PATH, 'utf8');
     const parsed = JSON.parse(raw);
     const labels = parsed['electron-workspace-root-labels'] || {};
+    const localProjects = parsed['local-projects'] &&
+      typeof parsed['local-projects'] === 'object' &&
+      !Array.isArray(parsed['local-projects'])
+      ? parsed['local-projects']
+      : {};
     const projectlessThreadIds = Array.isArray(parsed['projectless-thread-ids'])
       ? parsed['projectless-thread-ids'].filter((id) => typeof id === 'string' && id.trim())
       : [];
@@ -355,19 +360,41 @@ export async function readCodexWorkspaceState() {
     const seen = new Set();
     const projects = [];
 
-    for (const root of orderedRoots) {
-      if (!root || typeof root !== 'string') {
-        continue;
+    function addProject(root, label = null) {
+      if (!root || typeof root !== 'string' || !path.isAbsolute(root)) {
+        return;
       }
       const key = process.platform === 'win32' ? root.toLowerCase() : root;
       if (seen.has(key)) {
-        continue;
+        return;
       }
       seen.add(key);
       projects.push({
         path: root,
-        label: typeof labels[root] === 'string' ? labels[root] : null
+        label: typeof labels[root] === 'string' ? labels[root] : label
       });
+    }
+
+    for (const entry of orderedRoots) {
+      if (!entry || typeof entry !== 'string') {
+        continue;
+      }
+
+      // Codex desktop 0.149+ stores project IDs in project-order. Resolve
+      // them through local-projects instead of treating IDs as filesystem paths.
+      const localProject = localProjects[entry];
+      if (localProject && typeof localProject === 'object') {
+        const root = Array.isArray(localProject.rootPaths)
+          ? localProject.rootPaths.find((candidate) => typeof candidate === 'string' && path.isAbsolute(candidate))
+          : null;
+        if (root) {
+          addProject(root, typeof localProject.name === 'string' ? localProject.name : null);
+        }
+        continue;
+      }
+
+      // Older Codex versions stored absolute workspace paths directly.
+      addProject(entry);
     }
 
     return { projects, projectlessThreadIds, threadWorkspaceRootHints };

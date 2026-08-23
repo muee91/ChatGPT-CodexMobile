@@ -146,11 +146,6 @@ export default function PairingScreen({ pairing: pairingStatus = {}, authCanPair
           setScannerMessage('识别到了二维码，但不是 CodexMobile 配对二维码。');
           return;
         }
-        const lockedServer = normalizeServerUrl(serverInput) || '';
-        if (lockedServer && parsed.serverUrl && lockedServer !== parsed.serverUrl) {
-          setScannerMessage(`二维码来自 ${parsed.serverUrl}，和当前选中的 ${lockedServer} 不一致。`);
-          return;
-        }
         setPairing(true);
         setError('');
         setScannerMessage('已识别二维码，正在配对…');

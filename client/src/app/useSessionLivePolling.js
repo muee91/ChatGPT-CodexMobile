@@ -86,7 +86,8 @@ export function useSessionLivePolling({
       }
     }
 
-    const intervalMs = 1800;
+    // WebSocket is the primary sync path. Polling only repairs missed idle updates.
+    const intervalMs = 12_000;
     const timer = window.setInterval(pollSelectedSession, intervalMs);
     pollSelectedSession();
     return () => {

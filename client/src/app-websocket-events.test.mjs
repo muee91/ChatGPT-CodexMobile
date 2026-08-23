@@ -17,7 +17,8 @@ import {
   shouldRefreshCurrentSessionAfterReconnect,
   shouldRenderActivityMessageForPayload,
   shouldRenderAssistantMessageForPayload,
-  shouldRenderStatusMessageForPayload
+  shouldRenderStatusMessageForPayload,
+  websocketReconnectDelayMs
 } from './app/useAppWebSocket.js';
 
 test('desktop IPC status updates render through the same live path', () => {
@@ -143,6 +144,13 @@ test('websocket reconnect refresh skips drafts and restores real selected sessio
   assert.equal(shouldRefreshCurrentSessionAfterReconnect({ id: 'thread-1' }), true);
   assert.equal(shouldRefreshCurrentSessionAfterReconnect({ id: 'draft-project-1' }), false);
   assert.equal(shouldRefreshCurrentSessionAfterReconnect(null), false);
+});
+
+test('websocket reconnect backs off after repeated transport failures', () => {
+  assert.equal(websocketReconnectDelayMs(1), 1_000);
+  assert.equal(websocketReconnectDelayMs(2), 2_000);
+  assert.equal(websocketReconnectDelayMs(5), 15_000);
+  assert.equal(websocketReconnectDelayMs(99), 15_000);
 });
 
 test('sync-state project snapshots keep session lists available to the app shell', () => {

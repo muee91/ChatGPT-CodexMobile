@@ -54,6 +54,7 @@ async function withTempService(fn) {
   await fs.mkdir(path.dirname(certPath), { recursive: true });
   await fs.writeFile(path.join(clientDist, 'index.html'), '<h1>CodexMobile</h1>');
   await fs.writeFile(path.join(clientDist, 'worker.mjs'), 'export default null;');
+  await fs.writeFile(path.join(clientDist, 'codexmobile-sw.js'), 'self.skipWaiting();');
   await fs.writeFile(path.join(generatedRoot, 'image.png'), Buffer.from([137, 80, 78, 71]));
   await fs.writeFile(path.join(root, 'report.md'), '# Report');
   await fs.writeFile(path.join(root, 'page.html'), '<h1 onclick="bad()">报告</h1><script>alert(1)</script>');
@@ -91,6 +92,16 @@ test('serveStatic returns mjs files as JavaScript for module workers', async () 
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.headers['content-type'], 'text/javascript; charset=utf-8');
+  });
+});
+
+test('serveStatic prevents stale caching of the PWA service worker', async () => {
+  await withTempService(async (service) => {
+    const response = res();
+    await service.serveStatic(req(), response, new URL('http://local/codexmobile-sw.js'));
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers['cache-control'], 'no-store');
   });
 });
 

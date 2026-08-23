@@ -117,6 +117,7 @@ import { createPushService } from './push-service.js';
 import { renderPairingQrPage } from './pairing-qr-page.js';
 import { createStaticService } from './static-service.js';
 import { createSyncBridge } from './sync/sync-bridge.js';
+import { startWebSocketHeartbeat } from './websocket-heartbeat.js';
 import {
   CODEXMOBILE_DATA_ROOT,
   CODEXMOBILE_RUNTIME_ROOT,
@@ -1209,6 +1210,7 @@ async function main() {
   const server = http.createServer(requestHandler);
   const wss = new WebSocketServer({ noServer: true });
   const realtimeWss = new WebSocketServer({ noServer: true });
+  startWebSocketHeartbeat(wss);
 
   const handleUpgrade = async (req, socket, head) => {
     const url = new URL(req.url || '/', `http://${req.headers.host || `127.0.0.1:${PORT}`}`);
@@ -1247,7 +1249,11 @@ async function main() {
 
     wss.handleUpgrade(req, socket, head, async (ws) => {
       sockets.add(ws);
+      ws.isAlive = true;
       registerSocket(authResult.tokenHash, ws);
+      ws.on('pong', () => {
+        ws.isAlive = true;
+      });
       ws.on('close', () => {
         sockets.delete(ws);
         unregisterSocket(authResult.tokenHash, ws);

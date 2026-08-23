@@ -1,6 +1,6 @@
 {
   "name": "codexmobile",
-  "version": "2.0.5",
+  "version": "2.0.9",
   "description": "Private cross-device Codex PWA workbench for local sessions, desktop sync, queues, Git, skills, and private-network notifications.",
   "author": "muee91",
   "license": "MIT",

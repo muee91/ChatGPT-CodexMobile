@@ -8,12 +8,14 @@
  * - buildAuthCookie / clearAuthCookie — 设置或清理 HttpOnly 设备 Cookie。
  * - setSecurityHeaders / rejectUnsafeOrigin / rejectSuspiciousFetchSite — 请求与响应防护。
  *
- * Inward（本模块依赖/组装的关键符号）: Node HTTP headers。
+ * Inward（本模块依赖/组装的关键符号）: Node HTTP headers、security-options。
  *
  * Outward（谁在用/调用场景）: server/index 认证与请求入口。
  *
  * 不负责: token 校验与设备状态。
  */
+import { sameOriginAllowed } from './security-options.js';
+
 export const AUTH_COOKIE = 'codexmobile_token';
 
 function safeDecodeCookieValue(value) {
@@ -47,20 +49,22 @@ export function extractCookieToken(req) {
   return parseCookies(req.headers?.cookie || '')[AUTH_COOKIE] || '';
 }
 
-export function extractRequestToken(req, { allowBearer = false } = {}) {
+export function extractRequestToken(req, { allowBearer = false, allowQuery = false } = {}) {
   const cookieToken = extractCookieToken(req);
   if (cookieToken) {
-    return { token: cookieToken, source: cookieToken ? 'cookie' : '' };
+    return { token: cookieToken, source: 'cookie' };
   }
-  try {
-    const host = String(req.headers?.host || '127.0.0.1').split(',')[0].trim() || '127.0.0.1';
-    const url = new URL(req.url || '/', `http://${host}`);
-    const queryToken = String(url.searchParams.get('token') || '').trim();
-    if (queryToken) {
-      return { token: queryToken, source: 'query' };
+  if (allowQuery) {
+    try {
+      const host = String(req.headers?.host || '127.0.0.1').split(',')[0].trim() || '127.0.0.1';
+      const url = new URL(req.url || '/', `http://${host}`);
+      const queryToken = String(url.searchParams.get('token') || '').trim();
+      if (queryToken) {
+        return { token: queryToken, source: 'query' };
+      }
+    } catch {
+      // ignore malformed URL
     }
-  } catch {
-    // ignore malformed URL
   }
   if (!allowBearer) {
     return { token: '', source: '' };
@@ -130,7 +134,7 @@ export function rejectUnsafeOrigin(req, options) {
     return null;
   }
   const origin = String(req.headers.origin || '').trim();
-  if (!origin || options.allowedOrigins.includes(origin)) {
+  if (!origin || sameOriginAllowed(origin, options)) {
     return null;
   }
   return { statusCode: 403, error: 'Cross-origin request rejected' };

@@ -18,6 +18,14 @@
 import net from 'node:net';
 
 const NATIVE_CLIENT_ORIGINS = ['capacitor://localhost', 'http://localhost', 'https://localhost'];
+const LOCAL_NETWORK_DNS_SUFFIXES = [
+  '.local',
+  '.home.arpa',
+  '.lan',
+  '.internal',
+  '.localdomain',
+  '.ts.net'
+];
 
 export function envFlag(env, key) {
   return ['1', 'true', 'yes', 'on'].includes(String(env[key] || '').trim().toLowerCase());
@@ -98,6 +106,11 @@ export function parseOrigins(value) {
 export function readSecurityOptions(env = process.env) {
   const publicUrl = String(env.CODEXMOBILE_PUBLIC_URL || '').trim();
   const publicOrigin = publicUrl ? new URL(publicUrl).origin : '';
+  const configuredAllowedOrigins = [...new Set([
+    publicOrigin,
+    ...NATIVE_CLIENT_ORIGINS,
+    ...parseOrigins(env.CODEXMOBILE_ALLOWED_ORIGINS)
+  ].filter(Boolean))];
   const legacyBearerEnabled = envFlag(env, 'CODEXMOBILE_ALLOW_LEGACY_BEARER') ||
     String(env.CODEXMOBILE_ALLOW_LEGACY_BEARER || '').trim() === '';
   const publicAccess = envFlag(env, 'CODEXMOBILE_PUBLIC_ACCESS');
@@ -109,7 +122,10 @@ export function readSecurityOptions(env = process.env) {
     publicAccess,
     publicUrl,
     publicOrigin,
-    allowedOrigins: [...new Set([publicOrigin, ...NATIVE_CLIENT_ORIGINS, ...parseOrigins(env.CODEXMOBILE_ALLOWED_ORIGINS)].filter(Boolean))],
+    // Keep the boot-time allowlist separate because server/index also appends the
+    // current request origin for same-host LAN/PWA traffic at runtime.
+    configuredAllowedOrigins,
+    allowedOrigins: configuredAllowedOrigins,
     trustedProxyCidrs: String(env.CODEXMOBILE_TRUSTED_PROXIES || '').split(',').map((item) => item.trim()).filter(Boolean),
     privateCidrs: String(env.CODEXMOBILE_PRIVATE_CIDRS || '').split(',').map((item) => item.trim()).filter(Boolean),
     allowRemotePairing: envFlag(env, 'CODEXMOBILE_ALLOW_REMOTE_PAIRING'),
@@ -125,14 +141,36 @@ export function readSecurityOptions(env = process.env) {
   };
 }
 
-export function sameOriginAllowed(origin, options) {
+function localNetworkHostnameAllowed(hostname, options = {}) {
+  const raw = String(hostname || '').trim().toLowerCase();
+  const value = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+  return Boolean(value) && (
+    isPrivateRemoteAddress(value, options) ||
+    !value.includes('.') ||
+    LOCAL_NETWORK_DNS_SUFFIXES.some((suffix) => value.endsWith(suffix))
+  );
+}
+
+export function sameOriginAllowed(origin, options = {}) {
   const value = String(origin || '').trim();
-  if (!value || (options.allowedOrigins || []).includes(value)) {
+  if (!value) {
+    return true;
+  }
+  const configuredOrigins = options.configuredAllowedOrigins || options.allowedOrigins || [];
+  if (configuredOrigins.includes(value)) {
     return true;
   }
   try {
     const url = new URL(value);
-    return url.hostname === 'localhost' && ['http:', 'https:', 'capacitor:'].includes(url.protocol);
+    if (url.hostname === 'localhost' && ['http:', 'https:', 'capacitor:'].includes(url.protocol)) {
+      return true;
+    }
+    // The origin must exactly match the runtime origin derived for the request.
+    // Common private DNS suffixes are accepted without treating arbitrary public
+    // Host values as trusted.
+    return ['http:', 'https:'].includes(url.protocol) &&
+      localNetworkHostnameAllowed(url.hostname, options) &&
+      (options.allowedOrigins || []).includes(value);
   } catch {
     return false;
   }

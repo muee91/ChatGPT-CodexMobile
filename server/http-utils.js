@@ -1,15 +1,16 @@
 /**
  * HTTP 通用工具：JSON/HTML 响应、gzip 静态、请求体与安全路径解析。
  *
- * Keywords: http-utils, gzip, readBody, sendJson
+ * Keywords: http-utils, gzip, readBody, sendJson, pairing-authority
  *
  * Exports:
  * - DEFAULT_COMPRESSIBLE_EXTENSIONS — 可压缩静态扩展名集合。
- * - sendJson / sendHtml / htmlEscape — 响应与转义。
+ * - sanitizeJsonPayload / sendJson / sendHtml / htmlEscape — 响应、敏感字段收敛与转义。
+ * - hardenPairingRequestAuthority — 配对二维码生成前校正 Host/代理头。
  * - acceptsGzip / staticCacheControl / sendStaticContent — 静态与缓存。
  * - readBody / readBuffer — 读取请求体。
  *
- * Inward（本模块依赖/组装的关键符号）: node:zlib、node:path。
+ * Inward（本模块依赖/组装的关键符号）: node:zlib、node:path、security-options。
  *
  * Outward（谁在用/调用场景）: 几乎所有 server 路由模块。
  *
@@ -17,6 +18,14 @@
  */
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
+import {
+  clientRemoteAddress,
+  isTrustedProxy,
+  normalizeRemoteAddress,
+  readSecurityOptions
+} from './security-options.js';
+
+const authoritySecurityOptions = readSecurityOptions();
 
 export const DEFAULT_COMPRESSIBLE_EXTENSIONS = new Set([
   '.html',
@@ -27,12 +36,185 @@ export const DEFAULT_COMPRESSIBLE_EXTENSIONS = new Set([
   '.svg'
 ]);
 
+function isPublicPairingRequestPayload(payload) {
+  return Boolean(
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    payload.requestId &&
+    payload.codeLength &&
+    payload.expiresAt &&
+    !Object.prototype.hasOwnProperty.call(payload, 'code') &&
+    (payload.pairingUrl || payload.qrUrl)
+  );
+}
+
+function isUnauthenticatedStatusPayload(payload) {
+  return Boolean(
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    payload.connected === true &&
+    payload.auth?.required === true &&
+    payload.auth?.authenticated === false
+  );
+}
+
+function requestPath(req) {
+  return String(req?.url || '').split('?')[0];
+}
+
+function normalizedHostAddress(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  const unwrapped = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+  return normalizeRemoteAddress(unwrapped);
+}
+
+function loopbackAddress(value) {
+  return ['localhost', '127.0.0.1', '::1'].includes(normalizedHostAddress(value));
+}
+
+function requestHasForwardedAuthority(req) {
+  return Boolean(
+    req?.headers?.['x-forwarded-for'] ||
+    req?.headers?.['x-forwarded-host'] ||
+    req?.headers?.['x-forwarded-proto'] ||
+    req?.headers?.forwarded
+  );
+}
+
+function directLoopbackDiagnosticRequest(req, options) {
+  if (!req) {
+    return false;
+  }
+  const directRemote = normalizeRemoteAddress(req.socket?.remoteAddress || '');
+  if (!loopbackAddress(directRemote)) {
+    return false;
+  }
+  if (isTrustedProxy(directRemote, options)) {
+    return loopbackAddress(clientRemoteAddress(req, options));
+  }
+  // A local reverse proxy can make a remote request appear to originate from
+  // loopback. Only direct, non-forwarded requests receive the full diagnostic
+  // status used by the desktop shell and CLI smoke/status commands.
+  return !requestHasForwardedAuthority(req);
+}
+
+function publicUnauthenticatedStatus(payload) {
+  return {
+    connected: true,
+    hostName: payload.hostName || '',
+    port: Number(payload.port || 0) || null,
+    pairing: {
+      commands: ['cd <CodexMobile 项目目录>', 'npm run pair']
+    },
+    auth: {
+      required: true,
+      authenticated: false,
+      canPair: payload.auth?.canPair !== false
+    }
+  };
+}
+
+export function sanitizeJsonPayload(payload, {
+  request = null,
+  securityOptions = authoritySecurityOptions
+} = {}) {
+  let sanitized = payload;
+  if (isPublicPairingRequestPayload(sanitized)) {
+    const {
+      pairingUrl: _pairingUrl,
+      qrUrl: _qrUrl,
+      ...publicPayload
+    } = sanitized;
+    sanitized = publicPayload;
+  }
+  if (
+    requestPath(request) === '/api/status' &&
+    isUnauthenticatedStatusPayload(sanitized) &&
+    !directLoopbackDiagnosticRequest(request, securityOptions)
+  ) {
+    return publicUnauthenticatedStatus(sanitized);
+  }
+  return sanitized;
+}
+
+function pairingRequestPath(req) {
+  return requestPath(req);
+}
+
+function addressesEquivalent(left, right) {
+  const a = normalizedHostAddress(left);
+  const b = normalizedHostAddress(right);
+  return a === b || (loopbackAddress(a) && loopbackAddress(b));
+}
+
+function authorityUrl(host, secure) {
+  try {
+    return new URL(`${secure ? 'https' : 'http'}://${String(host || '').trim()}`);
+  } catch {
+    return null;
+  }
+}
+
+function safeSocketAuthority(req) {
+  const secure = Boolean(req.socket?.encrypted);
+  const address = normalizeRemoteAddress(req.socket?.localAddress || '') || '127.0.0.1';
+  const host = address.includes(':') ? `[${address}]` : address;
+  const fallbackPort = Number(process.env[secure ? 'HTTPS_PORT' : 'PORT'] || (secure ? 3443 : 3321));
+  const port = Number(req.socket?.localPort || fallbackPort);
+  return `${host}:${port}`;
+}
+
+function directAuthorityIsBound(req, host, options) {
+  const secure = Boolean(req.socket?.encrypted);
+  const parsed = authorityUrl(host, secure);
+  if (!parsed) {
+    return false;
+  }
+  const hostname = normalizedHostAddress(parsed.hostname);
+  const localAddress = normalizeRemoteAddress(req.socket?.localAddress || '');
+  const fallbackPort = Number(process.env[secure ? 'HTTPS_PORT' : 'PORT'] || (secure ? 3443 : 3321));
+  const requestedPort = Number(parsed.port || (secure ? 443 : 80));
+  const localPort = Number(req.socket?.localPort || fallbackPort);
+  if (addressesEquivalent(hostname, localAddress) && requestedPort === localPort) {
+    return true;
+  }
+
+  const origin = parsed.origin;
+  if ((options.configuredAllowedOrigins || []).includes(origin)) {
+    return true;
+  }
+
+  const tlsServerName = normalizedHostAddress(req.socket?.servername || '');
+  return secure && requestedPort === localPort && Boolean(tlsServerName) && tlsServerName === hostname;
+}
+
+export function hardenPairingRequestAuthority(req, options = authoritySecurityOptions) {
+  if (!['/api/pair/request', '/api/pair/terminal-request'].includes(pairingRequestPath(req))) {
+    return;
+  }
+  req.headers ||= {};
+  const directRemote = req.socket?.remoteAddress || '';
+  if (isTrustedProxy(directRemote, options)) {
+    return;
+  }
+
+  delete req.headers['x-forwarded-host'];
+  delete req.headers['x-forwarded-proto'];
+  delete req.headers['x-forwarded-port'];
+
+  if (!directAuthorityIsBound(req, req.headers.host, options)) {
+    req.headers.host = safeSocketAuthority(req);
+  }
+}
+
 export function sendJson(res, status, payload) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store'
   });
-  res.end(JSON.stringify(payload));
+  res.end(JSON.stringify(sanitizeJsonPayload(payload, { request: res.req || null })));
 }
 
 export function sendHtml(res, status, html) {
@@ -88,6 +270,7 @@ export function sendStaticContent(req, res, status, content, headers, ext, {
 }
 
 export function readBody(req, { maxBytes = 2 * 1024 * 1024 } = {}) {
+  hardenPairingRequestAuthority(req);
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (chunk) => {
